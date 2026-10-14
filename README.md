@@ -11,7 +11,15 @@ Prestigio independiente para AzerothCore 3.3.5a.
 - No cambia raza ni clase.
 - No depende de mod-habilidades-random.
 
-Instalación: copiar la carpeta a `modules/`, reconfigurar CMake/recompilar y aplicar los SQL de `data/sql/db-characters/base` y `data/sql/db-world/base` si tu actualizador de módulos no los aplica automáticamente. Desactiva/elimina el módulo combinado antiguo.
+Instalación: copiar la carpeta con el nombre `mod-prestigio-hollow` a `modules/`, reconfigurar CMake/recompilar y aplicar los SQL de `data/sql/db-characters/base` y `data/sql/db-world/base` si tu actualizador de módulos no los aplica automáticamente. Desactiva/elimina el módulo combinado antiguo.
+Para obtener directamente la carpeta con el nombre correcto:
+
+```sh
+git clone https://github.com/milyssd/prestigio.git mod-prestigio-hollow
+```
+
+Si descargas un ZIP, el nombre recomendado para instalarlo sigue siendo `mod-prestigio-hollow`. También se admite `mod-prestigio-hollow-main`, el nombre que genera GitHub al descargar la rama `main` de un repositorio llamado `mod-prestigio-hollow`.
+
 ## Actualizar desde la versión que enviaba equipo al buzón
 
 1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. El nombre recomendado es `mod-prestigio-hollow`; también se admiten `prestigio` (clonación del repositorio) y `prestigio-main` (ZIP de GitHub). Instala una sola copia del módulo.
@@ -34,7 +42,7 @@ La plantilla debe tener el bit de gossip (`npcflag & 1 = 1`), `AIName` vacío y 
 
 ### Error de enlace LNK2019 / LNK1120
 
-AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye ambos nombres y `Addprestigio_mainScripts` para el ZIP de GitHub. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
+AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye ambos nombres, `Addprestigio_mainScripts` para ZIPs del nombre anterior y `Addmod_prestigio_hollow_mainScripts` para ZIPs del repositorio renombrado. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
 
 ### Comprobaciones
 

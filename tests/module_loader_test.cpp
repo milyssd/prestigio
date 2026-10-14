@@ -4,6 +4,7 @@
 void Addmod_prestigio_hollowScripts();
 void AddprestigioScripts();
 void Addprestigio_mainScripts();
+void Addmod_prestigio_hollow_mainScripts();
 
 namespace
 {
@@ -24,5 +25,7 @@ int main()
     assert(registrations == 2);
     Addprestigio_mainScripts();
     assert(registrations == 3);
-    std::cout << "PASS: all three directory entry points link and register once\n";
+    Addmod_prestigio_hollow_mainScripts();
+    assert(registrations == 4);
+    std::cout << "PASS: all four directory entry points link and register once\n";
 }

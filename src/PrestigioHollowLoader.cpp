@@ -11,8 +11,14 @@ void AddprestigioScripts()
     AddPrestigioHollowScripts();
 }
 
-// GitHub's Download ZIP extracts the main branch as prestigio-main.
+// Compatibility with ZIPs downloaded under the previous repository name.
 void Addprestigio_mainScripts()
+{
+    AddPrestigioHollowScripts();
+}
+
+// GitHub ZIP directory after renaming the repository to mod-prestigio-hollow.
+void Addmod_prestigio_hollow_mainScripts()
 {
     AddPrestigioHollowScripts();
 }
