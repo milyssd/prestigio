@@ -1,0 +1,8 @@
+[worldserver]
+PrestigioHollow.Enable = 1
+PrestigioHollow.RequiredLevel = 80
+PrestigioHollow.AnnounceWorld = 1
+# El equipo se guarda siempre en las bolsas; se requiere un hueco por pieza.
+# La antigua opción PrestigioHollow.MailEquippedItems ya no se utiliza.
+PrestigioHollow.GiveStartingOutfit = 1
+PrestigioHollow.PreservePermanentSpells = 1
