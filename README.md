@@ -14,7 +14,7 @@ Prestigio independiente para AzerothCore 3.3.5a.
 Instalación: copiar la carpeta a `modules/`, reconfigurar CMake/recompilar y aplicar los SQL de `data/sql/db-characters/base` y `data/sql/db-world/base` si tu actualizador de módulos no los aplica automáticamente. Desactiva/elimina el módulo combinado antiguo.
 ## Actualizar desde la versión que enviaba equipo al buzón
 
-1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. Conserva ese nombre de carpeta para que el cargador registre `Addmod_prestigio_hollowScripts`.
+1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. El nombre recomendado es `mod-prestigio-hollow`; también se admiten `prestigio` (clonación del repositorio) y `prestigio-main` (ZIP de GitHub). Instala una sola copia del módulo.
 2. Reconfigura CMake, recompila e instala `worldserver`. Reinicia el proceso con el binario nuevo; recargar SQL no actualiza código C++.
 3. En `acore_world`, ejecuta `data/sql/manual/REPAIR_npc_prestigio_hollow.sql`. El script conserva las apariciones y añade el texto de bienvenida y el enlace al script. Para un NPC propio, cambia `@PH_NPC_ENTRY` por su entry antes de ejecutarlo. Este SQL no modifica personajes.
 4. Puedes quitar `PrestigioHollow.MailEquippedItems` de tu configuración antigua: ya no se lee. El equipo siempre se guarda en las bolsas y nunca se envía por correo.
@@ -32,6 +32,10 @@ SELECT guid, id1, npcflag, ScriptName FROM creature WHERE id1 = 2069426;
 
 La plantilla debe tener el bit de gossip (`npcflag & 1 = 1`), `AIName` vacío y `ScriptName = npc_prestigio_hollow`. El SQL de reparación elimina los overrides de script en las apariciones. Revisa también los errores de carga de scripts en los logs del servidor. Si tras aplicar SQL aparece texto pero no opciones, comprueba la compilación, instalación y reinicio del binario con el módulo.
 
+### Error de enlace LNK2019 / LNK1120
+
+AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye ambos nombres y `Addprestigio_mainScripts` para el ZIP de GitHub. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
+
 ### Comprobaciones
 
 El planificador de espacio tiene pruebas locales:
@@ -39,6 +43,8 @@ El planificador de espacio tiene pruebas locales:
 ```sh
 g++ -std=c++20 -Wall -Wextra -Werror tests/equipment_storage_test.cpp -o /tmp/prestigio-equipment-test
 /tmp/prestigio-equipment-test
+g++ -std=c++20 -Wall -Wextra -Werror tests/module_loader_test.cpp src/PrestigioHollowLoader.cpp -o /tmp/prestigio-loader-test
+/tmp/prestigio-loader-test
 ```
 
 Prueba además en un servidor de desarrollo: bolsas llenas (cancelación sin cambios), espacio justo (equipo en bolsas), bolsas especiales (solo cuentan huecos compatibles), conversación/confirmación y persistencia tras reconectar. La compilación y las pruebas SQL no sustituyen estas comprobaciones en juego.
