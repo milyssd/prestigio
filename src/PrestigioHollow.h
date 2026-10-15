@@ -13,6 +13,7 @@ public:
     bool IsEnabled() const { return _enabled; }
     uint32 GetRequiredLevel() const { return _requiredLevel; }
     uint32 GetPrestigeCount(uint32 guidLow) const;
+    bool CanPrestige(Player* player) const;
     bool Prestige(Player* player);
 
 private:

@@ -4,6 +4,7 @@
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
 #include "Item.h"
+#include "Log.h"
 #include "Bag.h"
 #include "EquipmentStorage.h"
 #include "ObjectMgr.h"
@@ -40,6 +41,7 @@ void PrestigioHollowMgr::LoadConfig()
     _announceWorld = sConfigMgr->GetOption<bool>("PrestigioHollow.AnnounceWorld", true);
     _giveStartingOutfit = sConfigMgr->GetOption<bool>("PrestigioHollow.GiveStartingOutfit", true);
     _preservePermanentSpells = sConfigMgr->GetOption<bool>("PrestigioHollow.PreservePermanentSpells", true);
+    LOG_INFO("module", "mod-prestigio-hollow: Enable={}, RequiredLevel={}", _enabled, _requiredLevel);
 }
 
 uint32 PrestigioHollowMgr::GetPrestigeCount(uint32 guidLow) const
@@ -193,10 +195,16 @@ void PrestigioHollowMgr::GiveStartingOutfit(Player* player) const
 void PrestigioHollowMgr::TeleportToRaceStart(Player* player) const
 {
     auto it = RaceStart.find(player->getRace());
-    if (it != RaceStart.end()) player->TeleportTo(it->second.map,it->second.x,it->second.y,it->second.z,it->second.o);
+    if (it == RaceStart.end() || !player->TeleportTo(it->second.map, it->second.x, it->second.y, it->second.z, it->second.o))
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            "El prestigio se completó, pero falló el traslado a la zona inicial. No repitas el prestigio: avisa a un GM.");
+        LOG_ERROR("module", "mod-prestigio-hollow: fallo el traslado inicial del personaje {} (raza {}).",
+            player->GetGUID().GetCounter(), player->getRace());
+    }
 }
 
-bool PrestigioHollowMgr::Prestige(Player* player)
+bool PrestigioHollowMgr::CanPrestige(Player* player) const
 {
     if (!player) return false;
     if (!_enabled) { ChatHandler(player->GetSession()).SendSysMessage("El modo prestigio está desactivado."); return false; }
@@ -205,6 +213,24 @@ bool PrestigioHollowMgr::Prestige(Player* player)
     if (player->GetLevel() < _requiredLevel) { ChatHandler(player->GetSession()).PSendSysMessage("Debes alcanzar nivel %u para prestigiar.", _requiredLevel); return false; }
     if (player->IsInCombat()) { ChatHandler(player->GetSession()).PSendSysMessage("No puedes prestigiar en combate."); return false; }
     if (player->GetPetGUID()) { ChatHandler(player->GetSession()).PSendSysMessage("Desinvoca tu mascota antes de prestigiar."); return false; }
+
+    return true;
+}
+
+bool PrestigioHollowMgr::Prestige(Player* player)
+{
+    if (!CanPrestige(player))
+        return false;
+
+    // A missing module schema must not reset a character without recording prestige.
+    if (!CharacterDatabase.Query("SELECT EXISTS(SELECT 1 FROM `mod_prestigio_hollow_stats` LIMIT 1)") ||
+        !CharacterDatabase.Query("SELECT EXISTS(SELECT 1 FROM `mod_prestigio_hollow_history` LIMIT 1)"))
+    {
+        ChatHandler(player->GetSession()).SendSysMessage(
+            "No se pudo comprobar la base de datos de prestigio. Pide a un GM que revise el SQL y los logs. No se ha cambiado nada.");
+        LOG_ERROR("module", "mod-prestigio-hollow: no se pudieron consultar las tablas de personajes. Revisar SQL/permisos/conexion.");
+        return false;
+    }
 
     uint32 guid = player->GetGUID().GetCounter();
     uint8 previousLevel = player->GetLevel();

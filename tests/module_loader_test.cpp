@@ -2,6 +2,7 @@
 #include <iostream>
 
 void Addmod_prestigio_hollowScripts();
+void Addmod_prestigioScripts();
 void AddprestigioScripts();
 void Addprestigio_mainScripts();
 void Addmod_prestigio_hollow_mainScripts();
@@ -27,5 +28,7 @@ int main()
     assert(registrations == 3);
     Addmod_prestigio_hollow_mainScripts();
     assert(registrations == 4);
-    std::cout << "PASS: all four directory entry points link and register once\n";
+    Addmod_prestigioScripts();
+    assert(registrations == 5);
+    std::cout << "PASS: all five directory entry points link and register once\n";
 }

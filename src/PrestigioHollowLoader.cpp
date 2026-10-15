@@ -22,3 +22,9 @@ void Addmod_prestigio_hollow_mainScripts()
 {
     AddPrestigioHollowScripts();
 }
+
+// Repository installed under modules/mod-prestigio/.
+void Addmod_prestigioScripts()
+{
+    AddPrestigioHollowScripts();
+}

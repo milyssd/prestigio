@@ -22,7 +22,7 @@ Si descargas un ZIP, el nombre recomendado para instalarlo sigue siendo `mod-pre
 
 ## Actualizar desde la versión que enviaba equipo al buzón
 
-1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. El nombre recomendado es `mod-prestigio-hollow`; también se admiten `prestigio` (clonación del repositorio) y `prestigio-main` (ZIP de GitHub). Instala una sola copia del módulo.
+1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. El nombre recomendado es `mod-prestigio-hollow`; también se admiten `mod-prestigio`, `prestigio` (clonación del repositorio) y `prestigio-main` (ZIP de GitHub). Instala una sola copia del módulo.
 2. Reconfigura CMake, recompila e instala `worldserver`. Reinicia el proceso con el binario nuevo; recargar SQL no actualiza código C++.
 3. En `acore_world`, ejecuta `data/sql/manual/REPAIR_npc_prestigio_hollow.sql`. El script conserva las apariciones y añade el texto de bienvenida y el enlace al script. Para un NPC propio, cambia `@PH_NPC_ENTRY` por su entry antes de ejecutarlo. Este SQL no modifica personajes.
 4. Puedes quitar `PrestigioHollow.MailEquippedItems` de tu configuración antigua: ya no se lee. El equipo siempre se guarda en las bolsas y nunca se envía por correo.
@@ -40,9 +40,23 @@ SELECT guid, id1, npcflag, ScriptName FROM creature WHERE id1 = 2069426;
 
 La plantilla debe tener el bit de gossip (`npcflag & 1 = 1`), `AIName` vacío y `ScriptName = npc_prestigio_hollow`. El SQL de reparación elimina los overrides de script en las apariciones. Revisa también los errores de carga de scripts en los logs del servidor. Si tras aplicar SQL aparece texto pero no opciones, comprueba la compilación, instalación y reinicio del binario con el módulo.
 
+### Menú, confirmación y vuelta al inicio
+
+El menú incluye **Volver a nivel 1**, **Cerrar** y, en la confirmación, **Volver al menú principal (cancelar)**. La opción de prestigio permanece visible por debajo del nivel requerido e indica el requisito; seleccionarla no permite saltárselo. Si falta espacio o no se cumple una condición, se explica el motivo en el chat y vuelve a mostrarse el menú. La zona inicial por raza se utiliza después de completar el prestigio; no es un teletransporte libre desde el NPC.
+
+Antes de modificar el personaje se comprueba que las tablas de contador e historial puedan consultarse. Si falta SQL o hay un fallo de conexión/permisos, se cancela con un mensaje. Si el prestigio se completa pero AzerothCore rechaza el teletransporte, se muestra una advertencia y se registra el fallo; no repitas el prestigio para intentar viajar.
+
+Para comprobar qué versión está ejecutándose, busca en los logs de inicio:
+
+```text
+mod-prestigio-hollow: NPC npc_prestigio_hollow registrado (menu con volver/cancelar).
+```
+
+Si no aparece, revisa que hayas compilado, instalado y reiniciado el `worldserver` que realmente ejecutas, con una sola copia del módulo y una sola llamada al registro desde la función de entrada correspondiente a su carpeta. Si aparece pero el NPC no abre el menú, ejecuta el SQL de solo lectura `data/sql/manual/DIAGNOSTIC_npc_prestigio_hollow.sql` y revisa el enlace del script. La configuración cargada de `Enable` y `RequiredLevel` se registra también al leerla.
+
 ### Error de enlace LNK2019 / LNK1120
 
-AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye ambos nombres, `Addprestigio_mainScripts` para ZIPs del nombre anterior y `Addmod_prestigio_hollow_mainScripts` para ZIPs del repositorio renombrado. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
+AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye también `Addmod_prestigioScripts` para `mod-prestigio`, ambos nombres anteriores, `Addprestigio_mainScripts` para ZIPs del nombre anterior y `Addmod_prestigio_hollow_mainScripts` para ZIPs del repositorio renombrado. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
 
 ### Comprobaciones
 
@@ -53,9 +67,11 @@ g++ -std=c++20 -Wall -Wextra -Werror tests/equipment_storage_test.cpp -o /tmp/pr
 /tmp/prestigio-equipment-test
 g++ -std=c++20 -Wall -Wextra -Werror tests/module_loader_test.cpp src/PrestigioHollowLoader.cpp -o /tmp/prestigio-loader-test
 /tmp/prestigio-loader-test
+g++ -std=c++20 -Wall -Wextra -Werror -Itests/npc_stubs tests/npc_navigation_test.cpp -o /tmp/prestigio-npc-test
+/tmp/prestigio-npc-test
 ```
 
-Prueba además en un servidor de desarrollo: bolsas llenas (cancelación sin cambios), espacio justo (equipo en bolsas), bolsas especiales (solo cuentan huecos compatibles), conversación/confirmación y persistencia tras reconectar. La compilación y las pruebas SQL no sustituyen estas comprobaciones en juego.
+La prueba de navegación ejecuta el script real con interfaces mínimas y un gestor simulado; comprueba los menús, no el reinicio completo de un personaje. Prueba además en un servidor de desarrollo: bolsas llenas (cancelación sin cambios), espacio justo (equipo en bolsas), bolsas especiales (solo cuentan huecos compatibles), conversación/confirmación y persistencia tras reconectar. La compilación y las pruebas SQL no sustituyen estas comprobaciones en juego.
 
 ## Historial de prestigios
 
