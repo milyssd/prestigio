@@ -12,6 +12,7 @@
 #include "SpellMgr.h"
 #include "WorldSession.h"
 #include "WorldSessionMgr.h"
+#include <algorithm>
 #include <unordered_map>
 #include <vector>
 
@@ -188,7 +189,23 @@ void PrestigioHollowMgr::GiveStartingOutfit(Player* player) const
     {
         if (e->ItemId[i] <= 0) continue;
         uint32 id = e->ItemId[i];
-        if (ItemTemplate const* proto = sObjectMgr->GetItemTemplate(id)) player->StoreNewItemInBestSlots(id, proto->BuyCount);
+        if (ItemTemplate const* proto = sObjectMgr->GetItemTemplate(id))
+        {
+            uint32 count = proto->BuyCount;
+            // Inventory and bank are retained. Do not recreate unique items such
+            // as the hearthstone when the character already owns the allowed amount.
+            if (proto->MaxCount > 0)
+            {
+                uint32 owned = player->GetItemCount(id, true);
+                uint32 limit = uint32(proto->MaxCount);
+                if (owned >= limit)
+                    continue;
+                count = std::min(count, limit - owned);
+            }
+            if (count && !player->StoreNewItemInBestSlots(id, count))
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "No se pudo entregar el objeto inicial %u. El prestigio continúa y tus objetos anteriores se conservan.", id);
+        }
     }
 }
 

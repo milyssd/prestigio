@@ -69,9 +69,16 @@ g++ -std=c++20 -Wall -Wextra -Werror tests/module_loader_test.cpp src/PrestigioH
 /tmp/prestigio-loader-test
 g++ -std=c++20 -Wall -Wextra -Werror -Itests/npc_stubs tests/npc_navigation_test.cpp -o /tmp/prestigio-npc-test
 /tmp/prestigio-npc-test
+python tests/starting_outfit_test.py
 ```
 
 La prueba de navegación ejecuta el script real con interfaces mínimas y un gestor simulado; comprueba los menús, no el reinicio completo de un personaje. Prueba además en un servidor de desarrollo: bolsas llenas (cancelación sin cambios), espacio justo (equipo en bolsas), bolsas especiales (solo cuentan huecos compatibles), conversación/confirmación y persistencia tras reconectar. La compilación y las pruebas SQL no sustituyen estas comprobaciones en juego.
+
+### Mensajes sobre `custom_prestige` y la piedra de hogar
+
+El módulo guarda contadores e historial en `mod_prestigio_hollow_stats` y `mod_prestigio_hollow_history`, dentro de la base de personajes. La base `custom_prestige` solo se menciona en `OPTIONAL_migrate_from_custom_prestige.sql`, para importar contadores de una instalación antigua. En instalaciones nuevas ese archivo no es necesario; ahora comprueba la existencia del origen antes de migrar y muestra un aviso si falta. Si el error MySQL 1049 sigue apareciendo durante el juego con esta versión, hay que localizar otro SQL o módulo que siga intentando acceder a esa base; crear una base vacía no reconstruye los datos antiguos.
+
+El objeto `6948` es la piedra de hogar. El error de inventario `17` significa que se alcanzó el máximo permitido de ese objeto. Al entregar el equipo inicial se tienen en cuenta los objetos que ya existen en inventario y banco: se omiten las copias únicas que ya se conservan. Si falla otro objeto inicial, el jugador recibe un mensaje específico en el chat.
 
 ## Historial de prestigios
 
