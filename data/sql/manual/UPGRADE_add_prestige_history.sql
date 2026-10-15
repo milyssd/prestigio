@@ -1,6 +1,8 @@
+USE `mod_prestigio_hollow`;
+
 -- Ejecutar solo si ya tenías mod-prestigio-hollow instalado antes de añadir el historial.
 -- Es seguro ejecutarlo más de una vez.
-CREATE TABLE IF NOT EXISTS `mod_prestigio_hollow_history` (
+CREATE TABLE IF NOT EXISTS `mod_prestigio_hollow`.`mod_prestigio_hollow_history` (
  `history_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
  `player_guid` INT UNSIGNED NOT NULL,
  `prestige_number` INT UNSIGNED NOT NULL,

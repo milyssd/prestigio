@@ -2,6 +2,9 @@
 #include "Chat.h"
 #include "Config.h"
 #include "DatabaseEnv.h"
+#include "PrestigioDatabase.h"
+#include "LanguagePreservation.h"
+#include "GameEventMgr.h"
 #include "DBCStores.h"
 #include "Item.h"
 #include "Log.h"
@@ -43,34 +46,51 @@ void PrestigioHollowMgr::LoadConfig()
     _giveStartingOutfit = sConfigMgr->GetOption<bool>("PrestigioHollow.GiveStartingOutfit", true);
     _preservePermanentSpells = sConfigMgr->GetOption<bool>("PrestigioHollow.PreservePermanentSpells", true);
     LOG_INFO("module", "mod-prestigio-hollow: Enable={}, RequiredLevel={}", _enabled, _requiredLevel);
+    if (!_enabled)
+        PrestigioDatabase::Instance().Close();
+    else if (_started)
+        PrestigioDatabase::Instance().Open(sConfigMgr->GetOption<std::string>("PrestigioHollow.DatabaseInfo", ""));
+}
+
+void PrestigioHollowMgr::Start()
+{
+    _started = true;
+    if (_enabled)
+        PrestigioDatabase::Instance().Open(sConfigMgr->GetOption<std::string>("PrestigioHollow.DatabaseInfo", ""));
+}
+
+void PrestigioHollowMgr::Stop()
+{
+    _started = false;
+    PrestigioDatabase::Instance().Close();
 }
 
 uint32 PrestigioHollowMgr::GetPrestigeCount(uint32 guidLow) const
 {
-    QueryResult r = CharacterDatabase.Query("SELECT `prestige_count` FROM `mod_prestigio_hollow_stats` WHERE `player_guid`=" + std::to_string(guidLow));
-    return r ? r->Fetch()[0].Get<uint32>() : 0;
+    uint32 count = 0;
+    if (_enabled) PrestigioDatabase::Instance().GetCount(guidLow, count);
+    return count;
 }
 
-void PrestigioHollowMgr::RecordPrestigeHistory(Player* player, uint32 prestigeNumber, uint8 previousLevel) const
+void PrestigioHollowMgr::RepairDefaultLanguages(Player* player) const
 {
-    if (!player)
-        return;
-
-    uint32 guid = player->GetGUID().GetCounter();
-    uint8 race = player->getRace();
-    uint8 playerClass = player->getClass();
-
-    CharacterDatabase.Execute(
-        "INSERT IGNORE INTO `mod_prestigio_hollow_history` "
-        "(`player_guid`,`prestige_number`,`prestiged_at`,`previous_level`,`class`,`race`) VALUES (" +
-        std::to_string(guid) + "," +
-        std::to_string(prestigeNumber) + ",NOW()," +
-        std::to_string(previousLevel) + "," +
-        std::to_string(playerClass) + "," +
-        std::to_string(race) + ")");
+    if (!player || !_enabled) return;
+    auto info = sObjectMgr->GetPlayerInfo(player->getRace(), player->getClass());
+    if (!info) return;
+    for (auto const& language : lang_description)
+    {
+        if (!language.skill_id || !language.spell_id) continue;
+        bool native = std::any_of(info->skills.begin(), info->skills.end(), [&](auto const& skill)
+        {
+            return skill.SkillId == language.skill_id;
+        });
+        if (!native) continue;
+        if (!player->HasSpell(language.spell_id)) player->learnSpell(language.spell_id);
+        if (!player->HasSkill(language.skill_id)) player->SetSkill(language.skill_id, 0, 300, 300);
+    }
 }
 
-bool PrestigioHollowMgr::StoreEquippedItems(Player* player) const
+bool PrestigioHollowMgr::PlanEquippedItems(Player* player, EquipmentMovePlan& plan) const
 {
     std::vector<uint16> freeSlots;
     for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
@@ -122,17 +142,22 @@ bool PrestigioHollowMgr::StoreEquippedItems(Player* player) const
         return false;
     }
 
-    // Every destination is empty, compatible and reserved for one existing item.
-    // Move the original instances: preserve GUIDs, enchants, gems and durability.
+    plan.clear();
     for (std::size_t i = 0; i < equipment.size(); ++i)
+        plan.emplace_back(equipment[i], destinations[i]);
+    return true;
+}
+
+void PrestigioHollowMgr::StoreEquippedItems(Player* player, EquipmentMovePlan const& plan) const
+{
+    for (auto const& move : plan)
     {
-        Item* item = equipment[i];
+        Item* item = move.first;
         ItemPosCountVec destination;
-        destination.emplace_back(destinations[i], item->GetCount());
+        destination.emplace_back(move.second, item->GetCount());
         player->RemoveItem(INVENTORY_SLOT_BAG_0, item->GetSlot(), true);
         player->StoreItem(destination, item, true);
     }
-    return true;
 }
 
 std::unordered_set<uint32> PrestigioHollowMgr::SnapshotPermanentSpells(Player* player) const
@@ -164,7 +189,6 @@ void PrestigioHollowMgr::RestorePermanentSpells(Player* player, std::unordered_s
 
 void PrestigioHollowMgr::ClearQuestProgress(Player* player) const
 {
-    uint32 guid = player->GetGUID().GetCounter();
     std::vector<uint32> active, rewarded;
     for (auto const& p : player->getQuestStatusMap()) active.push_back(p.first);
     for (uint32 id : player->getRewardedQuests()) rewarded.push_back(id);
@@ -174,10 +198,10 @@ void PrestigioHollowMgr::ClearQuestProgress(Player* player) const
     player->ResetDailyQuestStatus();
     player->ResetWeeklyQuestStatus();
     player->ResetMonthlyQuestStatus();
-    QueryResult seasonal = CharacterDatabase.Query("SELECT DISTINCT `event` FROM `character_queststatus_seasonal` WHERE `guid`=" + std::to_string(guid));
-    if (seasonal) do { player->ResetSeasonalQuestStatus(seasonal->Fetch()[0].Get<uint16>()); } while (seasonal->NextRow());
-    for (char const* table : {"character_queststatus","character_queststatus_rewarded","character_queststatus_daily","character_queststatus_weekly","character_queststatus_monthly","character_queststatus_seasonal"})
-        CharacterDatabase.Execute(std::string("DELETE FROM `") + table + "` WHERE `guid`=" + std::to_string(guid));
+    // Clear live seasonal state through the public API, without querying core tables.
+    auto const& events = sGameEventMgr->GetEventMap();
+    for (std::size_t event = 0; event < events.size() && event <= 65535; ++event)
+        player->ResetSeasonalQuestStatus(uint16(event));
 }
 
 void PrestigioHollowMgr::GiveStartingOutfit(Player* player) const
@@ -225,6 +249,7 @@ bool PrestigioHollowMgr::CanPrestige(Player* player) const
 {
     if (!player) return false;
     if (!_enabled) { ChatHandler(player->GetSession()).SendSysMessage("El modo prestigio está desactivado."); return false; }
+    if (!PrestigioDatabase::Instance().IsReady()) { ChatHandler(player->GetSession()).SendSysMessage("La base independiente de prestigio no está disponible. Avisa a un GM; tu personaje no se modificó."); return false; }
     if (!player->IsAlive()) { ChatHandler(player->GetSession()).SendSysMessage("Debes estar vivo para prestigiar."); return false; }
     if (player->GetTradeData()) { ChatHandler(player->GetSession()).SendSysMessage("Cierra el intercambio antes de prestigiar."); return false; }
     if (player->GetLevel() < _requiredLevel) { ChatHandler(player->GetSession()).PSendSysMessage("Debes alcanzar nivel %u para prestigiar.", _requiredLevel); return false; }
@@ -239,21 +264,20 @@ bool PrestigioHollowMgr::Prestige(Player* player)
     if (!CanPrestige(player))
         return false;
 
-    // A missing module schema must not reset a character without recording prestige.
-    if (!CharacterDatabase.Query("SELECT EXISTS(SELECT 1 FROM `mod_prestigio_hollow_stats` LIMIT 1)") ||
-        !CharacterDatabase.Query("SELECT EXISTS(SELECT 1 FROM `mod_prestigio_hollow_history` LIMIT 1)"))
+    EquipmentMovePlan equipment;
+    if (!PlanEquippedItems(player, equipment)) return false;
+    auto permanent = SnapshotPermanentSpells(player);
+    auto languages = PrestigioHollow::SnapshotLanguages(player, lang_description);
+    uint8 previousLevel = player->GetLevel();
+    uint32 count = 0;
+    // Commit the module counter and history together before changing the character.
+    if (!PrestigioDatabase::Instance().Record(player->GetGUID().GetCounter(), previousLevel,
+        player->getClass(), player->getRace(), count))
     {
-        ChatHandler(player->GetSession()).SendSysMessage(
-            "No se pudo comprobar la base de datos de prestigio. Pide a un GM que revise el SQL y los logs. No se ha cambiado nada.");
-        LOG_ERROR("module", "mod-prestigio-hollow: no se pudieron consultar las tablas de personajes. Revisar SQL/permisos/conexion.");
+        ChatHandler(player->GetSession()).SendSysMessage("No se pudo registrar el prestigio en su base independiente. No se ha cambiado nada.");
         return false;
     }
-
-    uint32 guid = player->GetGUID().GetCounter();
-    uint8 previousLevel = player->GetLevel();
-    uint32 count = GetPrestigeCount(guid) + 1;
-    auto permanent = SnapshotPermanentSpells(player);
-    if (!StoreEquippedItems(player)) return false;
+    StoreEquippedItems(player, equipment);
 
     ClearQuestProgress(player);                 // active + completed quests are intentionally erased
     player->GiveLevel(1);                       // ALWAYS level 1, including DK
@@ -261,16 +285,29 @@ bool PrestigioHollowMgr::Prestige(Player* player)
     player->resetTalents(true);
     player->resetSpells();                       // remove level-80 combat progression
     RestorePermanentSpells(player, permanent);  // professions, riding, mounts/companions, runeforging
+    PrestigioHollow::RestoreLanguages(player, languages); // always preserve languages, independent of config
+    RepairDefaultLanguages(player);
     player->InitTalentForLevel();
     for (uint8 b = 0; b < MAX_ACTION_BUTTONS; ++b) player->removeActionButton(b);
-    CharacterDatabase.Execute("DELETE FROM `character_action` WHERE `guid`=" + std::to_string(guid));
     GiveStartingOutfit(player);
 
-    CharacterDatabase.Execute("INSERT INTO `mod_prestigio_hollow_stats` (`player_guid`,`prestige_count`) VALUES (" + std::to_string(guid) + "," + std::to_string(count) + ") ON DUPLICATE KEY UPDATE `prestige_count`=VALUES(`prestige_count`)");
-    RecordPrestigeHistory(player, count, previousLevel);
     if (_announceWorld)
         sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING, "|cff8A2BE2[Prestigio Hollow]|r |cffffff00" + player->GetName() + "|r volvió a nivel 1. Prestigio: |cff00ff00" + std::to_string(count) + "|r");
+    // AzerothCore's reset APIs require the caller to delete daily/weekly/monthly/seasonal
+    // persistence. Save before teleporting: a far teleport defers SaveToDB and would
+    // otherwise commit only these deletes, without the rest of the character state.
+    auto trans = CharacterDatabase.BeginTransaction();
+    for (auto statement : {CHAR_DEL_QUEST_STATUS_DAILY_CHAR, CHAR_DEL_QUEST_STATUS_WEEKLY_CHAR,
+        CHAR_DEL_QUEST_STATUS_MONTHLY_CHAR, CHAR_DEL_QUEST_STATUS_SEASONAL_CHAR})
+    {
+        auto query = CharacterDatabase.GetPreparedStatement(statement);
+        query->SetData(0, player->GetGUID().GetCounter());
+        trans->Append(query);
+    }
+    player->SaveToDB(trans, false, true);
+    CharacterDatabase.CommitTransaction(trans);
     TeleportToRaceStart(player);
+    // Also request a save of the destination; core defers it until a far teleport finishes.
     player->SaveToDB(false, true);
     ChatHandler(player->GetSession()).PSendSysMessage("Prestigio completado: nivel 1, misiones reiniciadas, objetos y logros conservados. Prestigio %u.", count);
     return true;

@@ -1,66 +1,110 @@
 # mod-prestigio-hollow
 
-Prestigio independiente para AzerothCore 3.3.5a.
+Módulo de prestigio para AzerothCore 3.3.5a, con su propia base MySQL `mod_prestigio_hollow` y sin cambios en el código fuente del core. No depende de `mod-habilidades-random`.
 
-- Nivel 80 -> nivel 1, incluidos Caballeros de la Muerte.
-- Borra misiones activas y completadas para permitir un nuevo recorrido 1-80.
+- Devuelve al personaje al nivel 1, incluidos los Caballeros de la Muerte, y lo lleva a la zona inicial de su raza.
+- Reinicia misiones activas/completadas, talentos, XP, barras y hechizos de combate.
 - Conserva inventario, bolsas, banco, oro, correo y logros.
-- Antes de bajar de nivel, comprueba que haya un hueco libre compatible por pieza equipada y guarda el equipo original en tus bolsas. Si no cabe todo, cancela sin cambiar nada. No utiliza el buzón ni retira las bolsas equipadas.
+- Comprueba antes de empezar que cada pieza equipada tenga un hueco libre compatible. Guarda las piezas originales en las bolsas, con sus encantamientos y gemas; no utiliza el buzón ni retira las bolsas equipadas. Si no cabe todo, cancela sin modificar el personaje.
+- Conserva los idiomas que conoce el personaje, aunque `PreservePermanentSpells` esté desactivado. Repara los idiomas iniciales que falten al conectar o hablar con el NPC.
 - Conserva por defecto profesiones/recetas, equitación, monturas, compañeros y forja de runas.
-- Reinicia hechizos normales de combate, talentos, XP y barras de acción.
 - No cambia raza ni clase.
-- No depende de mod-habilidades-random.
 
-Instalación: copiar la carpeta con el nombre `mod-prestigio-hollow` a `modules/`, reconfigurar CMake/recompilar y aplicar los SQL de `data/sql/db-characters/base` y `data/sql/db-world/base` si tu actualizador de módulos no los aplica automáticamente. Desactiva/elimina el módulo combinado antiguo.
-Para obtener directamente la carpeta con el nombre correcto:
+## Base independiente
 
-```sh
-git clone https://github.com/milyssd/prestigio.git mod-prestigio-hollow
-```
+Los únicos datos propios del módulo son dos tablas en **`mod_prestigio_hollow`**:
 
-Si descargas un ZIP, el nombre recomendado para instalarlo sigue siendo `mod-prestigio-hollow`. También se admite `mod-prestigio-hollow-main`, el nombre que genera GitHub al descargar la rama `main` de un repositorio llamado `mod-prestigio-hollow`.
+| Tabla | Datos |
+| --- | --- |
+| `mod_prestigio_hollow_stats` | Contador por GUID de personaje. |
+| `mod_prestigio_hollow_history` | Número de prestigio, fecha, nivel anterior, clase y raza. |
 
-## Actualizar desde la versión que enviaba equipo al buzón
+El módulo utiliza una conexión separada: `PrestigioHollow.DatabaseInfo`. Solo acepta ese nombre de base; no reutiliza las credenciales del core ni crea tablas durante el arranque. Desactivado con `PrestigioHollow.Enable = 0`, no abre la conexión.
 
-1. Sustituye los archivos en `modules/mod-prestigio-hollow/`. El nombre recomendado es `mod-prestigio-hollow`; también se admiten `mod-prestigio`, `prestigio` (clonación del repositorio) y `prestigio-main` (ZIP de GitHub). Instala una sola copia del módulo.
-2. Reconfigura CMake, recompila e instala `worldserver`. Reinicia el proceso con el binario nuevo; recargar SQL no actualiza código C++.
-3. En `acore_world`, ejecuta `data/sql/manual/REPAIR_npc_prestigio_hollow.sql`. El script conserva las apariciones y añade el texto de bienvenida y el enlace al script. Para un NPC propio, cambia `@PH_NPC_ENTRY` por su entry antes de ejecutarlo. Este SQL no modifica personajes.
-4. Puedes quitar `PrestigioHollow.MailEquippedItems` de tu configuración antigua: ya no se lee. El equipo siempre se guarda en las bolsas y nunca se envía por correo.
+Si la configuración, conexión o tablas fallan, el prestigio queda bloqueado antes de cambiar al personaje. El error se registra sin ordenar el apagado de `worldserver`. Tras corregirlo, recarga la configuración o reinicia el servidor para conectar de nuevo.
 
-### Si el NPC no muestra texto ni opciones
+El nivel, inventario, idiomas y misiones siguen siendo datos del personaje: AzerothCore los guarda en su base habitual mediante sus APIs y consultas preparadas existentes. El NPC necesita sus registros en `world`. Esto no requiere modificar el source ni añadir tablas propias a `characters`, `world` o `auth`. El contador y el historial se guardan juntos en una transacción de la base propia; el guardado del personaje es una transacción del core separada.
 
-El script C++ añade opciones incluso por debajo del nivel requerido. Si no aparece ninguna, comprueba el enlace al script y que `worldserver` haya cargado el módulo:
+## Instalación o actualización
 
-```sql
--- Sustituye 2069426 por el entry de tu NPC si es diferente.
-SELECT entry, name, npcflag, AIName, ScriptName, gossip_menu_id
-FROM creature_template WHERE entry = 2069426;
-SELECT guid, id1, npcflag, ScriptName FROM creature WHERE id1 = 2069426;
-```
+1. Instala una sola copia en `modules/mod-prestigio-hollow`. Desactiva o retira el módulo combinado antiguo si sigue instalado.
 
-La plantilla debe tener el bit de gossip (`npcflag & 1 = 1`), `AIName` vacío y `ScriptName = npc_prestigio_hollow`. El SQL de reparación elimina los overrides de script en las apariciones. Revisa también los errores de carga de scripts en los logs del servidor. Si tras aplicar SQL aparece texto pero no opciones, comprueba la compilación, instalación y reinicio del binario con el módulo.
+   ```sh
+   git clone https://github.com/milyssd/prestigio.git mod-prestigio-hollow
+   ```
 
-### Menú, confirmación y vuelta al inicio
+   También se admiten las carpetas `mod-prestigio`, `prestigio`, `prestigio-main` y `mod-prestigio-hollow-main`. Usa una sola de ellas.
 
-El menú incluye **Volver a nivel 1**, **Cerrar** y, en la confirmación, **Volver al menú principal (cancelar)**. La opción de prestigio permanece visible por debajo del nivel requerido e indica el requisito; seleccionarla no permite saltárselo. Si falta espacio o no se cumple una condición, se explica el motivo en el chat y vuelve a mostrarse el menú. La zona inicial por raza se utiliza después de completar el prestigio; no es un teletransporte libre desde el NPC.
+2. Con una cuenta administradora de MySQL, ejecuta **`data/sql/db-prestigio/base/mod_prestigio_hollow.sql`**. Crea la base propia y sus dos tablas. Esta ruta es propia del módulo: importa el archivo manualmente; no presupongas que el actualizador de AzerothCore conoce esa base.
 
-Antes de modificar el personaje se comprueba que las tablas de contador e historial puedan consultarse. Si falta SQL o hay un fallo de conexión/permisos, se cancela con un mensaje. Si el prestigio se completa pero AzerothCore rechaza el teletransporte, se muestra una advertencia y se registra el fallo; no repitas el prestigio para intentar viajar.
+3. Si actualizas una instalación que ya tenía prestigios, detén `worldserver` y ejecuta **`data/sql/manual/MIGRATE_from_characters.sql`** después del SQL base. Cambia `@PH_characters_source` si tu base de personajes no se llama `acore_characters`. Copia los contadores y el historial a la nueva base sin borrar ni alterar el origen. Puede repetirse: no duplica los números del historial ni reduce los contadores existentes.
 
-Para comprobar qué versión está ejecutándose, busca en los logs de inicio:
+   Las tablas antiguas de personajes quedan como copia hasta que verifiques los datos. La nueva versión no las usa. El SQL que antes las creaba en `data/sql/db-characters/base` se ha retirado. Si actualizas copiando archivos encima de una carpeta antigua, retira también el archivo obsoleto `data/sql/db-characters/base/mod_prestigio_hollow.sql` de esa carpeta del módulo, para que el actualizador no lo vuelva a importar. Para instalaciones antiguas que usaban `custom_prestige.prestige_stats`, existe la importación opcional `OPTIONAL_migrate_from_custom_prestige.sql`; si ese origen no existe, informa y lo omite. No necesitas crear `custom_prestige`.
+
+4. Crea un usuario de MySQL para el módulo con permisos **SELECT, INSERT y UPDATE solo sobre `mod_prestigio_hollow`**. No necesita acceder a la base de personajes ni crear tablas. La cuenta administradora utilizada para instalar o migrar es diferente de esta cuenta de ejecución.
+
+5. Copia o actualiza `mod_prestigio_hollow.conf` en la carpeta de configuración de módulos que utiliza tu instalación. La plantilla es `conf/mod_prestigio_hollow.conf.dist`. Añade en el `.conf` real:
+
+   ```ini
+   PrestigioHollow.Enable = 1
+   PrestigioHollow.DatabaseInfo = "127.0.0.1;3306;prestigio_user;TU_CLAVE;mod_prestigio_hollow"
+   ```
+
+   Sustituye host, puerto, usuario y clave por los de tu MySQL. No subas las credenciales a GitHub. La plantilla deja `DatabaseInfo` vacío para evitar conectarse con datos inventados.
+
+6. Para instalar el NPC por primera vez, aplica `data/sql/db-world/base/mod_prestigio_hollow.sql` en tu base `world`. Instala la plantilla **2069426**, su texto y dos apariciones. Si el NPC ya existe, utiliza `data/sql/manual/REPAIR_npc_prestigio_hollow.sql`: conserva las apariciones existentes y repara el enlace al script. Para otro entry, cambia `@PH_NPC_ENTRY` en ese archivo.
+
+7. Regenera CMake para incluir también `PrestigioDatabase.cpp`, recompila e instala `worldserver`, y arranca el ejecutable nuevo. En Windows usa la configuración Release que despliegas en tu servidor. Copiar SQL o usar `.reload` no actualiza el código C++.
+
+## Error «No conoces ese idioma» después del prestigio
+
+El reinicio de hechizos puede dejar sin el hechizo o la habilidad de idioma al personaje. Ahora se conservan y restauran ambos al prestigiar, independientemente de la opción de profesiones. Solo se preservan idiomas conocidos; no se enseñan idiomas de otras razas por defecto.
+
+Para un personaje ya afectado, **instala el módulo actualizado y vuelve a conectar con él**, o habla con el NPC. Se reparan los idiomas iniciales de su raza y clase. No hace falta volver a prestigiar ni modificar tablas manualmente. El módulo debe estar activado; esta reparación no depende de que la base propia esté disponible. Los idiomas adicionales que se hubieran perdido antes de instalar esta corrección no pueden deducirse del estado actual del personaje.
+
+## NPC, confirmación y navegación
+
+El menú muestra el contador, **Volver a nivel 1** y **Cerrar**. Por debajo del nivel requerido, la opción indica el requisito. La confirmación incluye **Volver al menú principal (cancelar)**. Si falta espacio o no se cumple una condición, explica el motivo en el chat y vuelve al menú. No permite saltarse el nivel requerido.
+
+La zona inicial se utiliza después de completar el prestigio; el NPC no ofrece un teletransporte libre. Si el prestigio termina pero el core rechaza el viaje, aparece una advertencia y un error en el log: no repitas el prestigio para intentar viajar.
+
+Si no aparece texto ni ninguna opción, ejecuta en `world` el diagnóstico de solo lectura `data/sql/manual/DIAGNOSTIC_npc_prestigio_hollow.sql`. La plantilla necesita `npcflag & 1 = 1`, `AIName` vacío, `ScriptName = npc_prestigio_hollow` y `gossip_menu_id = 2069426`. El SQL de reparación corrige estos campos y los overrides de las apariciones. Comprueba además que el ejecutable haya cargado el módulo; debe registrar:
 
 ```text
 mod-prestigio-hollow: NPC npc_prestigio_hollow registrado (menu con volver/cancelar).
+mod-prestigio-hollow: base independiente mod_prestigio_hollow conectada.
 ```
 
-Si no aparece, revisa que hayas compilado, instalado y reiniciado el `worldserver` que realmente ejecutas, con una sola copia del módulo y una sola llamada al registro desde la función de entrada correspondiente a su carpeta. Si aparece pero el NPC no abre el menú, ejecuta el SQL de solo lectura `data/sql/manual/DIAGNOSTIC_npc_prestigio_hollow.sql` y revisa el enlace del script. La configuración cargada de `Enable` y `RequiredLevel` se registra también al leerla.
+Si solo aparece el primer mensaje, revisa los errores de configuración/conexión. Si no aparece ninguno, comprueba qué ejecutable estás arrancando y que hayas instalado el módulo compilado.
 
-### Error de enlace LNK2019 / LNK1120
+## Errores de enlace y equipo inicial
 
-AzerothCore genera el nombre de la función de entrada a partir de la carpeta del módulo. La carpeta `prestigio` requiere `AddprestigioScripts`; `mod-prestigio-hollow` requiere `Addmod_prestigio_hollowScripts`. Esta versión incluye también `Addmod_prestigioScripts` para `mod-prestigio`, ambos nombres anteriores, `Addprestigio_mainScripts` para ZIPs del nombre anterior y `Addmod_prestigio_hollow_mainScripts` para ZIPs del repositorio renombrado. Si un binario anterior no resuelve `AddprestigioScripts`, actualiza `src/PrestigioHollowLoader.cpp`, vuelve a generar CMake y recompila `worldserver`. También puedes usar el nombre recomendado `mod-prestigio-hollow` y volver a generar CMake.
+AzerothCore deriva la función de entrada del nombre de la carpeta. Esta versión exporta las cinco variantes admitidas; cada función llama **una sola vez** a `AddPrestigioHollowScripts()`. Si aparece LNK2019/LNK1120 con una función `Add...Scripts`, revisa el nombre de la carpeta, actualiza `src/PrestigioHollowLoader.cpp` y regenera CMake antes de recompilar. No añadas llamadas duplicadas ni código de pruebas dentro del módulo.
 
-### Comprobaciones
+La opción antigua `PrestigioHollow.MailEquippedItems` ya no se lee; puedes retirarla del `.conf`. El equipo siempre va a las bolsas.
 
-El planificador de espacio tiene pruebas locales:
+El objeto `6948` es la piedra de hogar. El error de inventario `17` indica que ya se alcanzó el máximo permitido del objeto. La entrega de equipo inicial ahora cuenta los objetos conservados en inventario y banco para no duplicar objetos únicos. Si falla otro objeto inicial, el jugador recibe un mensaje concreto.
+
+## Consultar el contador y el historial
+
+Estas consultas solo necesitan acceso a la base propia:
+
+```sql
+USE mod_prestigio_hollow;
+SELECT player_guid, prestige_count
+FROM mod_prestigio_hollow_stats
+ORDER BY prestige_count DESC, player_guid;
+
+SELECT player_guid, prestige_number, prestiged_at, previous_level, class, race
+FROM mod_prestigio_hollow_history
+ORDER BY prestiged_at DESC, history_id DESC;
+```
+
+Los contadores antiguos se conservan al migrar. Si antes no había historial, no se inventan fechas de prestigios anteriores. Para añadir únicamente la tabla de historial en una base propia ya existente, puedes usar `data/sql/manual/UPGRADE_add_prestige_history.sql`.
+
+## Verificación
+
+Pruebas locales sin un servidor completo:
 
 ```sh
 g++ -std=c++20 -Wall -Wextra -Werror tests/equipment_storage_test.cpp -o /tmp/prestigio-equipment-test
@@ -69,60 +113,13 @@ g++ -std=c++20 -Wall -Wextra -Werror tests/module_loader_test.cpp src/PrestigioH
 /tmp/prestigio-loader-test
 g++ -std=c++20 -Wall -Wextra -Werror -Itests/npc_stubs tests/npc_navigation_test.cpp -o /tmp/prestigio-npc-test
 /tmp/prestigio-npc-test
-python tests/starting_outfit_test.py
+g++ -std=c++20 -Wall -Wextra -Werror tests/languages_test.cpp -o /tmp/prestigio-languages-test
+/tmp/prestigio-languages-test
+python3 tests/starting_outfit_test.py
 ```
 
-La prueba de navegación ejecuta el script real con interfaces mínimas y un gestor simulado; comprueba los menús, no el reinicio completo de un personaje. Prueba además en un servidor de desarrollo: bolsas llenas (cancelación sin cambios), espacio justo (equipo en bolsas), bolsas especiales (solo cuentan huecos compatibles), conversación/confirmación y persistencia tras reconectar. La compilación y las pruebas SQL no sustituyen estas comprobaciones en juego.
+`tests/database_integration.cpp` prueba el conector real, enlazado con las bibliotecas database/common de AzerothCore. Requiere un MySQL de pruebas desechable; los modos `unavailable`, `normal` y `rollback` comprueban conexión fallida, contador/historial y reversión de una transacción fallida. No lo ejecutes sobre datos reales.
 
-### Mensajes sobre `custom_prestige` y la piedra de hogar
+Se ha comprobado la compilación de los cuatro archivos C++ contra AzerothCore del 15 de agosto de 2026, commit `5fa7cb00fa04814c4afe6701f0c6c09e9fb96cea`, en Linux. Las pruebas con MySQL 8 verifican la instalación repetible, migraciones, una cuenta limitada a la base propia y errores de conexión/esquema sin terminar el proceso. No equivalen a compilar tu solución completa de Windows ni a probar en tu servidor en vivo.
 
-El módulo guarda contadores e historial en `mod_prestigio_hollow_stats` y `mod_prestigio_hollow_history`, dentro de la base de personajes. La base `custom_prestige` solo se menciona en `OPTIONAL_migrate_from_custom_prestige.sql`, para importar contadores de una instalación antigua. En instalaciones nuevas ese archivo no es necesario; ahora comprueba la existencia del origen antes de migrar y muestra un aviso si falta. Si el error MySQL 1049 sigue apareciendo durante el juego con esta versión, hay que localizar otro SQL o módulo que siga intentando acceder a esa base; crear una base vacía no reconstruye los datos antiguos.
-
-El objeto `6948` es la piedra de hogar. El error de inventario `17` significa que se alcanzó el máximo permitido de ese objeto. Al entregar el equipo inicial se tienen en cuenta los objetos que ya existen en inventario y banco: se omiten las copias únicas que ya se conservan. Si falla otro objeto inicial, el jugador recibe un mensaje específico en el chat.
-
-## Historial de prestigios
-
-Cada prestigio completado registra una fila independiente en `mod_prestigio_hollow_history` con:
-
-- GUID del personaje.
-- Numero de prestigio.
-- Fecha y hora.
-- Nivel anterior.
-- Clase.
-- Raza.
-
-La tabla `mod_prestigio_hollow_stats` sigue guardando el total actual de prestigios de cada personaje.
-
-### Ver quienes han prestigado
-
-```sql
-SELECT
-    c.guid,
-    c.name AS personaje,
-    s.prestige_count AS prestigios
-FROM mod_prestigio_hollow_stats s
-INNER JOIN characters c ON c.guid = s.player_guid
-WHERE s.prestige_count > 0
-ORDER BY s.prestige_count DESC, c.name ASC;
-```
-
-### Ver el historial completo
-
-```sql
-SELECT
-    h.history_id,
-    c.name AS personaje,
-    h.player_guid,
-    h.prestige_number,
-    h.prestiged_at,
-    h.previous_level,
-    h.class,
-    h.race
-FROM mod_prestigio_hollow_history h
-LEFT JOIN characters c ON c.guid = h.player_guid
-ORDER BY h.prestiged_at DESC, h.history_id DESC;
-```
-
-Si ya tenias una version anterior de este modulo instalada, ejecuta una vez `data/sql/manual/UPGRADE_add_prestige_history.sql`. En una instalacion nueva, la tabla se crea desde `data/sql/db-characters/base/mod_prestigio_hollow.sql`.
-
-Los prestigios antiguos que solo existan en `mod_prestigio_hollow_stats` conservan su contador, pero no se inventan fechas historicas. El historial detallado comienza a registrarse desde esta version.
+En un servidor de desarrollo, comprueba también bolsas llenas/espacio justo/bolsas especiales, idiomas después del prestigio y tras reconectar, y persistencia de misiones, contador e historial.

@@ -8,6 +8,8 @@ public:
     explicit WorldScript(char const*) { }
     virtual ~WorldScript() = default;
     virtual void OnAfterConfigLoad(bool) { }
+    virtual void OnStartup() { }
+    virtual void OnShutdown() { }
 };
 class CreatureScript
 {
@@ -23,4 +25,5 @@ public:
     explicit PlayerScript(char const*) { }
     virtual ~PlayerScript() = default;
     virtual void OnPlayerLevelChanged(Player*, uint8) { }
+    virtual void OnPlayerLogin(Player*) { }
 };

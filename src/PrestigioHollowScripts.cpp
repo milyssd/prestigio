@@ -22,6 +22,8 @@ class PrestigioHollowWorld : public WorldScript
 public:
     PrestigioHollowWorld() : WorldScript("PrestigioHollowWorld") { }
     void OnAfterConfigLoad(bool) override { sPrestigioHollowMgr->LoadConfig(); }
+    void OnStartup() override { sPrestigioHollowMgr->Start(); }
+    void OnShutdown() override { sPrestigioHollowMgr->Stop(); }
 };
 
 class npc_prestigio_hollow : public CreatureScript
@@ -31,6 +33,7 @@ public:
 
     bool OnGossipHello(Player* player, Creature* creature) override
     {
+        sPrestigioHollowMgr->RepairDefaultLanguages(player);
         ClearGossipMenuFor(player);
         uint32 count = sPrestigioHollowMgr->GetPrestigeCount(player->GetGUID().GetCounter());
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Prestigios actuales: " + std::to_string(count), GOSSIP_SENDER_MAIN, PH_INFO);
@@ -91,6 +94,7 @@ class PrestigioHollowPlayer : public PlayerScript
 {
 public:
     PrestigioHollowPlayer() : PlayerScript("PrestigioHollowPlayer") { }
+    void OnPlayerLogin(Player* player) override { sPrestigioHollowMgr->RepairDefaultLanguages(player); }
     void OnPlayerLevelChanged(Player* player, uint8) override
     {
         if (sPrestigioHollowMgr->IsEnabled() && player->GetLevel() == sPrestigioHollowMgr->GetRequiredLevel())

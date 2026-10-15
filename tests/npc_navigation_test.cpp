@@ -12,6 +12,9 @@ unsigned prestigeCalls = 0;
 }
 PrestigioHollowMgr* PrestigioHollowMgr::instance() { static PrestigioHollowMgr manager; return &manager; }
 void PrestigioHollowMgr::LoadConfig() { _enabled = enabled; }
+void PrestigioHollowMgr::Start() { }
+void PrestigioHollowMgr::Stop() { }
+void PrestigioHollowMgr::RepairDefaultLanguages(Player*) const { }
 uint32 PrestigioHollowMgr::GetPrestigeCount(uint32) const { return 3; }
 bool PrestigioHollowMgr::CanPrestige(Player* player) const { return _enabled && player->GetLevel() >= _requiredLevel; }
 bool PrestigioHollowMgr::Prestige(Player* player) { ++prestigeCalls; return CanPrestige(player) && completePrestige; }
