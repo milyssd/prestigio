@@ -4,6 +4,13 @@
 #include "DatabaseEnv.h"
 #include "PrestigioDatabase.h"
 #include "LanguagePreservation.h"
+#include "PermanentSkills.h"
+#include "CryptoRandom.h"
+#include "Util.h"
+#include "ObjectAccessor.h"
+#include "Creature.h"
+#include "ScriptedGossip.h"
+#include "CharacterCache.h"
 #include "GameEventMgr.h"
 #include "DBCStores.h"
 #include "Item.h"
@@ -46,30 +53,71 @@ void PrestigioHollowMgr::LoadConfig()
     _giveStartingOutfit = sConfigMgr->GetOption<bool>("PrestigioHollow.GiveStartingOutfit", true);
     _preservePermanentSpells = sConfigMgr->GetOption<bool>("PrestigioHollow.PreservePermanentSpells", true);
     LOG_INFO("module", "mod-prestigio-hollow: Enable={}, RequiredLevel={}", _enabled, _requiredLevel);
-    if (!_enabled)
-        PrestigioDatabase::Instance().Close();
-    else if (_started)
-        PrestigioDatabase::Instance().Open(sConfigMgr->GetOption<std::string>("PrestigioHollow.DatabaseInfo", ""));
+    if (_requiredLevel < 2 || _requiredLevel > 255)
+        _requiredLevel = 80;
+    if (_started)
+        PrestigioDatabase::Instance().SetEnabled(_enabled);
 }
 
 void PrestigioHollowMgr::Start()
 {
     _started = true;
-    if (_enabled)
-        PrestigioDatabase::Instance().Open(sConfigMgr->GetOption<std::string>("PrestigioHollow.DatabaseInfo", ""));
+    // Separate worker, same MySQL instance: native character state and own-schema receipts commit together.
+    PrestigioDatabase::Instance().Start(sConfigMgr->GetOption<std::string>("CharacterDatabaseInfo", ""), _enabled);
 }
 
 void PrestigioHollowMgr::Stop()
 {
+    PrestigioDatabase::Instance().Stop();
     _started = false;
-    PrestigioDatabase::Instance().Close();
 }
 
-uint32 PrestigioHollowMgr::GetPrestigeCount(uint32 guidLow) const
+void PrestigioHollowMgr::Update()
 {
-    uint32 count = 0;
-    if (_enabled) PrestigioDatabase::Instance().GetCount(guidLow, count);
-    return count;
+    PrestigioDatabase::Instance().Poll();
+}
+
+bool PrestigioHollowMgr::IsBusy(uint32 guid) const
+{
+    std::lock_guard<std::mutex> lock(_busyMutex);
+    return _busy.count(guid) != 0;
+}
+
+void PrestigioHollowMgr::SetBusy(uint32 guid, bool busy)
+{
+    std::lock_guard<std::mutex> lock(_busyMutex);
+    if (busy)
+        _busy.insert(guid);
+    else
+        _busy.erase(guid);
+}
+
+void PrestigioHollowMgr::CancelMenuRequest(uint32 guid)
+{
+    _menuRequests.erase(guid);
+}
+
+void PrestigioHollowMgr::RequestCount(Player* player, Creature* creature,
+    std::function<void(Player*, Creature*, std::optional<uint32>)> render)
+{
+    auto guid = player->GetGUID();
+    auto npc = creature->GetGUID();
+    auto account = player->GetSession()->GetAccountId();
+    auto ticket = ++_nextMenuRequest;
+    _menuRequests[guid.GetCounter()] = ticket;
+    PrestigioDatabase::Instance().GetCount(guid.GetCounter(), [this, guid, npc, account, ticket, render](bool ok, uint32 count)
+    {
+        auto it = _menuRequests.find(guid.GetCounter());
+        if (it == _menuRequests.end() || it->second != ticket)
+            return;
+        _menuRequests.erase(it);
+        Player* current = ObjectAccessor::FindConnectedPlayer(guid);
+        if (!current || current->GetSession()->GetAccountId() != account ||
+            current->PlayerTalkClass->GetGossipMenu().GetSenderGUID() != npc)
+            return;
+        if (Creature* source = ObjectAccessor::GetCreature(*current, npc))
+            render(current, source, ok ? std::optional<uint32>(count) : std::nullopt);
+    });
 }
 
 void PrestigioHollowMgr::RepairDefaultLanguages(Player* player) const
@@ -144,7 +192,7 @@ bool PrestigioHollowMgr::PlanEquippedItems(Player* player, EquipmentMovePlan& pl
 
     plan.clear();
     for (std::size_t i = 0; i < equipment.size(); ++i)
-        plan.emplace_back(equipment[i], destinations[i]);
+        plan.push_back({equipment[i], destinations[i], equipment[i]->GetSlot()});
     return true;
 }
 
@@ -152,12 +200,36 @@ void PrestigioHollowMgr::StoreEquippedItems(Player* player, EquipmentMovePlan co
 {
     for (auto const& move : plan)
     {
-        Item* item = move.first;
+        Item* item = move.item;
         ItemPosCountVec destination;
-        destination.emplace_back(move.second, item->GetCount());
+        destination.emplace_back(move.destination, item->GetCount());
         player->RemoveItem(INVENTORY_SLOT_BAG_0, item->GetSlot(), true);
         player->StoreItem(destination, item, true);
     }
+}
+
+void PrestigioHollowMgr::RestoreEquippedItems(Player* player, EquipmentMovePlan const& plan) const
+{
+    for (auto const& move : plan)
+    {
+        player->RemoveItem(move.item->GetBagSlot(), move.item->GetSlot(), true);
+        player->EquipItem((uint16(INVENTORY_SLOT_BAG_0) << 8) | move.originalSlot, move.item, true);
+    }
+}
+
+void PrestigioHollowMgr::ResetAllTalents(Player* player) const
+{
+    player->resetTalents(true);
+    std::vector<uint32> talents;
+    for (auto const& talent : player->GetTalentMap())
+        if (talent.second && talent.second->State != PLAYERSPELL_REMOVED)
+            talents.push_back(talent.first);
+    for (uint32 id : talents)
+        player->_removeTalent(id, SPEC_MASK_ALL);
+    player->InitTalentForLevel();
+    for (uint8 button = 0; button < MAX_ACTION_BUTTONS; ++button)
+        player->removeActionButton(button);
+    player->SendActionButtons(2);
 }
 
 std::unordered_set<uint32> PrestigioHollowMgr::SnapshotPermanentSpells(Player* player) const
@@ -233,29 +305,39 @@ void PrestigioHollowMgr::GiveStartingOutfit(Player* player) const
     }
 }
 
-void PrestigioHollowMgr::TeleportToRaceStart(Player* player) const
+bool PrestigioHollowMgr::CheckPlayer(Player* player) const
 {
-    auto it = RaceStart.find(player->getRace());
-    if (it == RaceStart.end() || !player->TeleportTo(it->second.map, it->second.x, it->second.y, it->second.z, it->second.o))
+    if (!player || !player->IsInWorld())
+        return false;
+    auto chat = ChatHandler(player->GetSession());
+    if (!_enabled) { chat.SendSysMessage("El modo prestigio está desactivado."); return false; }
+    if (!player->IsAlive()) { chat.SendSysMessage("Debes estar vivo para prestigiar."); return false; }
+    if (player->GetTradeData()) { chat.SendSysMessage("Cierra el intercambio antes de prestigiar."); return false; }
+    if (player->GetLevel() < _requiredLevel) { chat.PSendSysMessage("Debes alcanzar nivel {} para prestigiar.", _requiredLevel); return false; }
+    if (player->IsInCombat()) { chat.SendSysMessage("No puedes prestigiar en combate."); return false; }
+    if (player->GetPetGUID()) { chat.SendSysMessage("Desinvoca tu mascota antes de prestigiar."); return false; }
+    if (player->IsBeingTeleported() || player->IsInFlight() || player->InBattleground() || player->InArena())
     {
-        ChatHandler(player->GetSession()).SendSysMessage(
-            "El prestigio se completó, pero falló el traslado a la zona inicial. No repitas el prestigio: avisa a un GM.");
-        LOG_ERROR("module", "mod-prestigio-hollow: fallo el traslado inicial del personaje {} (raza {}).",
-            player->GetGUID().GetCounter(), player->getRace());
+        chat.SendSysMessage("Termina el viaje o sal del campo de batalla antes de prestigiar.");
+        return false;
     }
+    if (RaceStart.find(player->getRace()) == RaceStart.end())
+    {
+        chat.SendSysMessage("No hay zona inicial configurada para tu raza.");
+        return false;
+    }
+    return true;
 }
 
 bool PrestigioHollowMgr::CanPrestige(Player* player) const
 {
-    if (!player) return false;
-    if (!_enabled) { ChatHandler(player->GetSession()).SendSysMessage("El modo prestigio está desactivado."); return false; }
-    if (!PrestigioDatabase::Instance().IsReady()) { ChatHandler(player->GetSession()).SendSysMessage("La base independiente de prestigio no está disponible. Avisa a un GM; tu personaje no se modificó."); return false; }
-    if (!player->IsAlive()) { ChatHandler(player->GetSession()).SendSysMessage("Debes estar vivo para prestigiar."); return false; }
-    if (player->GetTradeData()) { ChatHandler(player->GetSession()).SendSysMessage("Cierra el intercambio antes de prestigiar."); return false; }
-    if (player->GetLevel() < _requiredLevel) { ChatHandler(player->GetSession()).PSendSysMessage("Debes alcanzar nivel %u para prestigiar.", _requiredLevel); return false; }
-    if (player->IsInCombat()) { ChatHandler(player->GetSession()).PSendSysMessage("No puedes prestigiar en combate."); return false; }
-    if (player->GetPetGUID()) { ChatHandler(player->GetSession()).PSendSysMessage("Desinvoca tu mascota antes de prestigiar."); return false; }
-
+    if (!CheckPlayer(player))
+        return false;
+    if (IsBusy(player->GetGUID().GetCounter()))
+    {
+        ChatHandler(player->GetSession()).SendSysMessage("Tu solicitud de prestigio ya está en proceso.");
+        return false;
+    }
     return true;
 }
 
@@ -263,52 +345,108 @@ bool PrestigioHollowMgr::Prestige(Player* player)
 {
     if (!CanPrestige(player))
         return false;
+    auto guid = player->GetGUID();
+    auto account = player->GetSession()->GetAccountId();
+    SetBusy(guid.GetCounter(), true);
+    ChatHandler(player->GetSession()).SendSysMessage("Comprobando el prestigio. Al guardar volverás a la selección de personajes.");
+    PrestigioDatabase::Instance().Check([this, guid, account](bool ready)
+    {
+        Player* current = ObjectAccessor::FindConnectedPlayer(guid);
+        if (!current || current->GetSession()->GetAccountId() != account)
+        {
+            SetBusy(guid.GetCounter(), false);
+            return;
+        }
+        if (!ready || !CheckPlayer(current))
+        {
+            if (!ready)
+                ChatHandler(current->GetSession()).SendSysMessage("El prestigio no está disponible. Tu personaje no se modificó; avisa a un GM.");
+            SetBusy(guid.GetCounter(), false);
+            return;
+        }
+        ApplyPrestige(current);
+    });
+    return true;
+}
 
+void PrestigioHollowMgr::ApplyPrestige(Player* player)
+{
+    auto guid = player->GetGUID();
     EquipmentMovePlan equipment;
-    if (!PlanEquippedItems(player, equipment)) return false;
+    if (!PlanEquippedItems(player, equipment))
+    {
+        SetBusy(guid.GetCounter(), false);
+        return;
+    }
     auto permanent = SnapshotPermanentSpells(player);
     auto languages = PrestigioHollow::SnapshotLanguages(player, lang_description);
+    auto skills = PrestigioHollow::SnapshotSkills(player, [this](uint32 id)
+    {
+        return _preservePermanentSpells && (IsProfessionOrRidingSkill(id) || id == SKILL_MOUNTS ||
+            id == SKILL_COMPANIONS || id == SKILL_RUNEFORGING);
+    });
+    uint16 freeProfessions = player->GetFreePrimaryProfessionPoints();
     uint8 previousLevel = player->GetLevel();
-    uint32 count = 0;
-    // Commit the module counter and history together before changing the character.
-    if (!PrestigioDatabase::Instance().Record(player->GetGUID().GetCounter(), previousLevel,
-        player->getClass(), player->getRace(), count))
-    {
-        ChatHandler(player->GetSession()).SendSysMessage("No se pudo registrar el prestigio en su base independiente. No se ha cambiado nada.");
-        return false;
-    }
+    uint8 playerClass = player->getClass(), race = player->getRace();
+    auto name = player->GetName();
+    auto baseline = std::make_shared<PrestigeSaveTransaction>();
+    player->SaveToDB(baseline, false, true);
     StoreEquippedItems(player, equipment);
-
-    ClearQuestProgress(player);                 // active + completed quests are intentionally erased
-    player->GiveLevel(1);                       // ALWAYS level 1, including DK
-    player->SetUInt32Value(PLAYER_XP, 0);
-    player->resetTalents(true);
-    player->resetSpells();                       // remove level-80 combat progression
-    RestorePermanentSpells(player, permanent);  // professions, riding, mounts/companions, runeforging
-    PrestigioHollow::RestoreLanguages(player, languages); // always preserve languages, independent of config
-    RepairDefaultLanguages(player);
-    player->InitTalentForLevel();
-    for (uint8 b = 0; b < MAX_ACTION_BUTTONS; ++b) player->removeActionButton(b);
-    GiveStartingOutfit(player);
-
-    if (_announceWorld)
-        sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING, "|cff8A2BE2[Prestigio Hollow]|r |cffffff00" + player->GetName() + "|r volvió a nivel 1. Prestigio: |cff00ff00" + std::to_string(count) + "|r");
-    // AzerothCore's reset APIs require the caller to delete daily/weekly/monthly/seasonal
-    // persistence. Save before teleporting: a far teleport defers SaveToDB and would
-    // otherwise commit only these deletes, without the rest of the character state.
-    auto trans = CharacterDatabase.BeginTransaction();
-    for (auto statement : {CHAR_DEL_QUEST_STATUS_DAILY_CHAR, CHAR_DEL_QUEST_STATUS_WEEKLY_CHAR,
-        CHAR_DEL_QUEST_STATUS_MONTHLY_CHAR, CHAR_DEL_QUEST_STATUS_SEASONAL_CHAR})
+    player->GiveLevel(1);
+    bool cancelled = player->GetLevel() != 1;
+    auto changed = std::make_shared<PrestigeSaveTransaction>();
+    if (cancelled)
     {
-        auto query = CharacterDatabase.GetPreparedStatement(statement);
-        query->SetData(0, player->GetGUID().GetCounter());
-        trans->Append(query);
+        RestoreEquippedItems(player, equipment);
+        ChatHandler(player->GetSession()).SendSysMessage("Otro módulo impidió bajar de nivel. El prestigio se canceló sin borrar tus misiones ni contar otro prestigio.");
     }
-    player->SaveToDB(trans, false, true);
-    CharacterDatabase.CommitTransaction(trans);
-    TeleportToRaceStart(player);
-    // Also request a save of the destination; core defers it until a far teleport finishes.
-    player->SaveToDB(false, true);
-    ChatHandler(player->GetSession()).PSendSysMessage("Prestigio completado: nivel 1, misiones reiniciadas, objetos y logros conservados. Prestigio %u.", count);
-    return true;
+    else
+    {
+        ClearQuestProgress(player);
+        player->SetUInt32Value(PLAYER_XP, 0);
+        ResetAllTalents(player);
+        player->resetSpells();
+        RestorePermanentSpells(player, permanent);
+        PrestigioHollow::RestoreSkills(player, skills);
+        if (_preservePermanentSpells)
+            player->SetFreePrimaryProfessions(freeProfessions);
+        PrestigioHollow::RestoreLanguages(player, languages);
+        RepairDefaultLanguages(player);
+        GiveStartingOutfit(player);
+        for (auto statement : {CHAR_DEL_QUEST_STATUS_DAILY_CHAR, CHAR_DEL_QUEST_STATUS_WEEKLY_CHAR,
+            CHAR_DEL_QUEST_STATUS_MONTHLY_CHAR, CHAR_DEL_QUEST_STATUS_SEASONAL_CHAR})
+        {
+            auto query = CharacterDatabase.GetPreparedStatement(statement);
+            query->SetData(0, guid.GetCounter());
+            changed->Append(query);
+        }
+        player->SaveToDB(changed, false, true);
+        // Inactive-spec actions are not loaded into m_actionButtons. Clear all specs in this same save.
+        auto actions = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHAR_ACTION);
+        actions->SetData(0, guid.GetCounter());
+        changed->Append(actions);
+        auto const& location = RaceStart.at(race);
+        Player::SavePositionInDB(WorldLocation(location.map, location.x, location.y, location.z, location.o), 0, guid, changed);
+    }
+    auto token = ByteArrayToHexStr(Acore::Crypto::GetRandomBytes<16>());
+    bool announce = _announceWorld;
+    WorldSession* session = player->GetSession();
+    // No ordinary logout/autosave may persist the in-memory reset outside the atomic transaction.
+    // This call deletes Player. Nothing below captures or touches that pointer.
+    session->LogoutPlayer(false);
+    PrestigioDatabase::Instance().Save(guid.GetCounter(), previousLevel, playerClass, race,
+        token, baseline, changed, cancelled, [this, guid, name, announce, previousLevel](bool success, uint32 count)
+    {
+        SetBusy(guid.GetCounter(), false);
+        sCharacterCache->UpdateCharacterLevel(guid, success ? 1 : previousLevel);
+        if (success)
+        {
+            LOG_INFO("module", "mod-prestigio-hollow: prestigio {} de {} guardado atomicamente.", count, name);
+            if (announce)
+                sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING, "[Prestigio Hollow] " + name +
+                    " volvió a nivel 1. Prestigio: " + std::to_string(count));
+        }
+        else
+            LOG_ERROR("module", "mod-prestigio-hollow: prestigio de {} cancelado; estado original restaurado y contador sin incrementar.", name);
+    });
 }

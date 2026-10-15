@@ -1,5 +1,5 @@
 #include "../src/LanguagePreservation.h"
-#include <cassert>
+#include "TestCheck.h"
 #include <iostream>
 #include <map>
 #include <set>
@@ -25,25 +25,25 @@ int main()
     Player player;
     player.skills[137]={0,300,300}; player.spells.insert(813);
     auto saved = PrestigioHollow::SnapshotLanguages(&player,catalog);
-    assert(saved.size()==1);
+    CHECK(saved.size()==1);
     player.skills.clear(); player.spells.clear(); // simulate resetSpells at level 1
     PrestigioHollow::RestoreLanguages(&player,saved);
-    assert(player.HasSpell(813) && player.HasSkill(137) && player.skills[137].value==300);
-    assert(!player.HasSpell(668) && !player.HasSpell(669)); // no extra faction languages
+    CHECK(player.HasSpell(813) && player.HasSkill(137) && player.skills[137].value==300);
+    CHECK(!player.HasSpell(668) && !player.HasSpell(669)); // no extra faction languages
 
     Player skillOnly; skillOnly.skills[98]={2,200,300};
     saved=PrestigioHollow::SnapshotLanguages(&skillOnly,catalog);
     skillOnly.skills.clear(); PrestigioHollow::RestoreLanguages(&skillOnly,saved);
-    assert(skillOnly.HasSpell(668) && skillOnly.skills[98].step==2 && skillOnly.skills[98].value==200);
+    CHECK(skillOnly.HasSpell(668) && skillOnly.skills[98].step==2 && skillOnly.skills[98].value==200);
 
     Player spellOnly; spellOnly.spells.insert(669);
     saved=PrestigioHollow::SnapshotLanguages(&spellOnly,catalog);
     spellOnly.spells.clear(); PrestigioHollow::RestoreLanguages(&spellOnly,saved);
-    assert(spellOnly.HasSkill(109) && spellOnly.HasSpell(669) && spellOnly.skills[109].maximum==300);
+    CHECK(spellOnly.HasSkill(109) && spellOnly.HasSpell(669) && spellOnly.skills[109].maximum==300);
 
     Player empty;
     saved=PrestigioHollow::SnapshotLanguages(&empty,catalog);
     PrestigioHollow::RestoreLanguages(&empty,saved);
-    assert(empty.skills.empty() && empty.spells.empty());
+    CHECK(empty.skills.empty() && empty.spells.empty());
     std::cout << "PASS: spoken languages survive reset, partial language state is repaired, unknown languages stay unknown\n";
 }

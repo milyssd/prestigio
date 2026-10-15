@@ -1,13 +1,12 @@
 [worldserver]
 PrestigioHollow.Enable = 1
-# Base independiente obligatoria. No se reutilizan credenciales del core.
-# Formato: host;puerto;usuario;clave;mod_prestigio_hollow[;ssl]
-# Ejemplo local (sustituir usuario y clave en el .conf real, no en Git):
-# PrestigioHollow.DatabaseInfo = "127.0.0.1;3306;prestigio_user;TU_CLAVE;mod_prestigio_hollow"
-PrestigioHollow.DatabaseInfo = ""
+# La base mod_prestigio_hollow debe estar en la misma instancia MySQL que characters.
+# Un trabajador propio usa CharacterDatabaseInfo para guardar ambas bases atomicamente.
+# El usuario de characters requiere SELECT, INSERT, UPDATE sobre mod_prestigio_hollow.*.
+# La antigua opcion PrestigioHollow.DatabaseInfo ya no se lee.
 PrestigioHollow.RequiredLevel = 80
 PrestigioHollow.AnnounceWorld = 1
-# El equipo se guarda siempre en las bolsas; se requiere un hueco por pieza.
-# La antigua opción PrestigioHollow.MailEquippedItems ya no se utiliza.
+# El equipo va siempre a las bolsas, con un hueco compatible por pieza.
+# MailEquippedItems ya no se lee. Al confirmar se vuelve a seleccion de personajes.
 PrestigioHollow.GiveStartingOutfit = 1
 PrestigioHollow.PreservePermanentSpells = 1

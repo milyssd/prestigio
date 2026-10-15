@@ -1,6 +1,6 @@
 #include "../src/EquipmentStorage.h"
 #include <algorithm>
-#include <cassert>
+#include "TestCheck.h"
 #include <iostream>
 #include <set>
 
@@ -9,18 +9,18 @@ using Slots = std::vector<std::vector<std::uint16_t>>;
 void ExpectFits(Slots const& candidates)
 {
     std::vector<std::uint16_t> destinations;
-    assert(PrestigioHollow::PlanEquipmentStorage(candidates, destinations));
-    assert(destinations.size() == candidates.size());
-    assert(std::set<std::uint16_t>(destinations.begin(), destinations.end()).size() == destinations.size());
+    CHECK(PrestigioHollow::PlanEquipmentStorage(candidates, destinations));
+    CHECK(destinations.size() == candidates.size());
+    CHECK(std::set<std::uint16_t>(destinations.begin(), destinations.end()).size() == destinations.size());
     for (std::size_t i = 0; i < candidates.size(); ++i)
-        assert(std::find(candidates[i].begin(), candidates[i].end(), destinations[i]) != candidates[i].end());
+        CHECK(std::find(candidates[i].begin(), candidates[i].end(), destinations[i]) != candidates[i].end());
 }
 
 void ExpectFull(Slots const& candidates)
 {
     std::vector<std::uint16_t> destinations{999};
-    assert(!PrestigioHollow::PlanEquipmentStorage(candidates, destinations));
-    assert(destinations.empty()); // never expose a partial move plan
+    CHECK(!PrestigioHollow::PlanEquipmentStorage(candidates, destinations));
+    CHECK(destinations.empty()); // never expose a partial move plan
 }
 
 int main()

@@ -1,4 +1,4 @@
-#include <cassert>
+#include "TestCheck.h"
 #include <iostream>
 
 void Addmod_prestigio_hollowScripts();
@@ -21,14 +21,14 @@ void AddPrestigioHollowScripts()
 int main()
 {
     Addmod_prestigio_hollowScripts();
-    assert(registrations == 1);
+    CHECK(registrations == 1);
     AddprestigioScripts();
-    assert(registrations == 2);
+    CHECK(registrations == 2);
     Addprestigio_mainScripts();
-    assert(registrations == 3);
+    CHECK(registrations == 3);
     Addmod_prestigio_hollow_mainScripts();
-    assert(registrations == 4);
+    CHECK(registrations == 4);
     Addmod_prestigioScripts();
-    assert(registrations == 5);
+    CHECK(registrations == 5);
     std::cout << "PASS: all five directory entry points link and register once\n";
 }

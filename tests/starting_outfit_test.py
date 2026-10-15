@@ -7,11 +7,11 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 source = (root / 'src/PrestigioHollow.cpp').read_text()
 start = source.index('void PrestigioHollowMgr::GiveStartingOutfit(')
-end = source.index('void PrestigioHollowMgr::TeleportToRaceStart(', start)
+end = source.index('bool PrestigioHollowMgr::CheckPlayer(', start)
 method = source[start:end]
 harness = r'''
 #include <algorithm>
-#include <cassert>
+#include "TestCheck.h"
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -60,35 +60,35 @@ int main() {
     PrestigioHollowMgr mgr;
     Player existing; existing.inventory[6948] = 1;
     mgr.GiveStartingOutfit(&existing);
-    assert(existing.granted[6948] == 0 && existing.granted[100] == 5);
+    CHECK(existing.granted[6948] == 0 && existing.granted[100] == 5);
 
     Player banked; banked.bank[6948] = 1;
     mgr.GiveStartingOutfit(&banked);
-    assert(banked.granted[6948] == 0);
+    CHECK(banked.granted[6948] == 0);
 
     Player missing;
     mgr.GiveStartingOutfit(&missing);
-    assert(missing.granted[6948] == 1);
+    CHECK(missing.granted[6948] == 1);
     mgr.GiveStartingOutfit(&missing);
-    assert(missing.granted[6948] == 1); // repeated prestige preserves the original unique item
+    CHECK(missing.granted[6948] == 1); // repeated prestige preserves the original unique item
 
     objects.items[100] = {5, 3};
     Player limited; limited.inventory[100] = 2;
     mgr.GiveStartingOutfit(&limited);
-    assert(limited.granted[100] == 1);
+    CHECK(limited.granted[100] == 1);
 
     Player over; over.inventory[100] = 9;
     mgr.GiveStartingOutfit(&over);
-    assert(over.granted[100] == 0);
+    CHECK(over.granted[100] == 0);
 
     Player failed; failed.fail = true;
     mgr.GiveStartingOutfit(&failed);
-    assert(warnings == 2);
+    CHECK(warnings == 2);
 
     mgr._giveStartingOutfit = false;
     Player disabled;
     mgr.GiveStartingOutfit(&disabled);
-    assert(disabled.granted.empty());
+    CHECK(disabled.granted.empty());
     std::cout << "PASS: unique items in inventory/bank, missing item, repeat prestige, limits, failures and disabled outfit\n";
 }
 '''
@@ -96,5 +96,5 @@ with tempfile.TemporaryDirectory(prefix='prestigio-outfit-') as temp:
     test_source = Path(temp) / 'outfit_test.cpp'
     executable = Path(temp) / 'outfit_test'
     test_source.write_text(harness + method + tests)
-    subprocess.run([os.environ.get('CXX', 'g++'), '-std=c++20', '-Wall', '-Wextra', '-Werror', str(test_source), '-o', str(executable)], check=True)
+    subprocess.run([os.environ.get('CXX', 'g++'), '-std=c++20', '-Wall', '-Wextra', '-Werror', '-I'+str(root/'tests'), str(test_source), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)

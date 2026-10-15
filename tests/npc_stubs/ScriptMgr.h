@@ -8,6 +8,7 @@ public:
     explicit WorldScript(char const*) { }
     virtual ~WorldScript() = default;
     virtual void OnAfterConfigLoad(bool) { }
+    virtual void OnUpdate(uint32) { }
     virtual void OnStartup() { }
     virtual void OnShutdown() { }
 };
@@ -26,4 +27,8 @@ public:
     virtual ~PlayerScript() = default;
     virtual void OnPlayerLevelChanged(Player*, uint8) { }
     virtual void OnPlayerLogin(Player*) { }
+    virtual void OnPlayerLogout(Player*) { }
 };
+
+class WorldSession; class WorldPacket;
+class ServerScript { public: explicit ServerScript(char const*) {} virtual ~ServerScript()=default; virtual bool CanPacketReceive(WorldSession*, WorldPacket const&) { return true; } };
