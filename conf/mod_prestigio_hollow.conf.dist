@@ -89,7 +89,7 @@ PrestigioHollow.MaxPrestige = 0
 #                     0 (Desactivado)
 #
 
-PrestigioHollow.AnnounceWorld = 1
+PrestigioHollow.AnnounceWorld = 0
 
 #
 #    PrestigioHollow.GiveStartingOutfit

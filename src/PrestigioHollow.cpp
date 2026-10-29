@@ -495,22 +495,19 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         Player::SavePositionInDB(WorldLocation(location.map, location.x, location.y, location.z, location.o), 0, guid, changed);
     }
     auto token = ByteArrayToHexStr(Acore::Crypto::GetRandomBytes<16>());
-    bool announce = _announceWorld;
     WorldSession* session = player->GetSession();
     uint32 accountId = session ? session->GetAccountId() : 0;
     uint32 totalTimePlayed = player->GetTotalPlayedTime();
-    session->LogoutPlayer(false);
+    if (session)
+        session->LogoutPlayer(false);
     PrestigioDatabase::Instance().Save(guid.GetCounter(), accountId, name, previousLevel, playerClass, race,
-        totalTimePlayed, token, baseline, changed, cancelled, [this, guid, name, announce, previousLevel](bool success, uint32 count)
+        totalTimePlayed, token, baseline, changed, cancelled, [this, guid, name, previousLevel](bool success, uint32 count)
     {
         SetBusy(guid.GetCounter(), false);
         sCharacterCache->UpdateCharacterLevel(guid, success ? 1 : previousLevel);
         if (success)
         {
             LOG_INFO("module", "mod-prestigio-hollow: prestigio {} de {} guardado atomicamente en DB 'prestigio'.", count, name);
-            if (announce)
-                sWorldSessionMgr->SendServerMessage(SERVER_MSG_STRING, "[Prestigio Hollow] " + name +
-                    " volvio a nivel 1. Prestigio: " + std::to_string(count));
             SendPrestigeReward(guid, count);
         }
         else
@@ -731,7 +728,8 @@ void PrestigioHollowMgr::ResetPlayerLevelOne(Player* player) const
         pet->SynchronizeLevelWithOwner();
 
     // Resetear skills de armas/defensa que hayan quedado desfasadas (ej. valor=400, max=5)
-    for (auto const& pair : player->GetSkillStatusMap())
+    auto const skillMap = player->GetSkillStatusMap();
+    for (auto const& pair : skillMap)
     {
         uint32 skId = pair.first;
         if (!IsProfessionOrRidingSkill(skId) && skId != SKILL_MOUNTS && skId != SKILL_COMPANIONS && skId != SKILL_RUNEFORGING)
@@ -812,7 +810,8 @@ void PrestigioHollowMgr::EnsurePrestigedPlayerReady(Player* player, uint32 prest
             bool hasAnyAction = false;
             for (uint8 b = 0; b < MAX_ACTION_BUTTONS; ++b)
             {
-                if (player->GetActionButton(b)->GetAction() != 0)
+                ActionButton const* btn = player->GetActionButton(b);
+                if (btn && btn->GetAction() != 0)
                 {
                     hasAnyAction = true;
                     break;
