@@ -148,8 +148,9 @@ public:
             {
                 // Al alcanzar el nivel 80 se remueve el spell identificador de prestigio
                 sPrestigioHollowMgr->RemovePrestigeSpell(p);
-                // Si tenia habilidades o monturas retenidas, se restauran
-                sPrestigioHollowMgr->RestoreRetainedData(p);
+                // Si tenia habilidades o monturas retenidas, se restauran (solo para jugadores con prestigio)
+                if (count > 0)
+                    sPrestigioHollowMgr->RestoreRetainedData(p);
             }
             else if (count > 0)
             {
@@ -166,21 +167,38 @@ public:
         if (player->getClass() == CLASS_DEATH_KNIGHT)
             return;
 
+        uint32 guid = player->GetGUID().GetCounter();
+
         if (player->GetLevel() >= 80)
         {
             // 1. Quitar el spell identificador de prestigio (solo activo del 1 al 79)
             sPrestigioHollowMgr->RemovePrestigeSpell(player);
 
-            // 2. Restaurar profesiones, recetas, monturas y companeros retenidos
-            sPrestigioHollowMgr->RestoreRetainedData(player);
+            // 2. Restaurar datos y notificar solo a jugadores que ya tengan prestigio (prestigio >= 1)
+            sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
+            {
+                if (!success || count == 0)
+                    return;
 
-            if (sPrestigioHollowMgr->IsEnabled() && player->GetLevel() == sPrestigioHollowMgr->GetRequiredLevel())
-                ChatHandler(player->GetSession()).PSendSysMessage("|cff8A2BE2[Prestigio Hollow]|r ¡Felicidades por alcanzar el nivel 80! Ya puedes volver a prestigiar.");
+                Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+                if (!p)
+                    return;
+
+                sPrestigioHollowMgr->RestoreRetainedData(p);
+
+                if (sPrestigioHollowMgr->IsEnabled() && p->GetLevel() >= sPrestigioHollowMgr->GetRequiredLevel())
+                {
+                    if (sPrestigioHollowMgr->GetMaxPrestige() == 0 || count < sPrestigioHollowMgr->GetMaxPrestige())
+                    {
+                        ChatHandler(p->GetSession()).PSendSysMessage(
+                            "|cff8A2BE2[Prestigio Hollow]|r ¡Felicidades por alcanzar el nivel 80! Ya puedes volver a prestigiar.");
+                    }
+                }
+            });
         }
         else
         {
             // Niveles 1 al 79: asegurar que no tenga alas de SysAlas y tenga su spell de rango
-            uint32 guid = player->GetGUID().GetCounter();
             sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
             {
                 if (success && count > 0)
