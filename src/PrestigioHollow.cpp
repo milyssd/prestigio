@@ -371,6 +371,10 @@ bool PrestigioHollowMgr::Prestige(Player* player)
 {
     if (!CanPrestige(player))
         return false;
+
+    // Guardar inmediatamente todo el inventario, items y progreso actuales en CharacterDatabase
+    player->SaveToDB(false, false);
+
     auto guid = player->GetGUID().GetCounter();
     SetBusy(guid, true);
     PrestigioDatabase::Instance().GetCount(guid, [this, guid](bool ok, uint32 count)
@@ -400,6 +404,10 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         SetBusy(guid.GetCounter(), false);
         return;
     }
+
+    // Asegurar guardado previo de todo el inventario y estado en CharacterDatabase
+    player->SaveToDB(false, false);
+
     auto permanent = SnapshotPermanentSpells(player);
     auto languages = PrestigioHollow::SnapshotLanguages(player, lang_description);
     auto skills = PrestigioHollow::SnapshotSkills(player, [this](uint32 id)
@@ -472,6 +480,7 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         ResetPlayerLevelOne(player);
         GiveStartingOutfit(player);
 
+        CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         for (auto statement : {
             CHAR_DEL_CHAR_ACTION,
             CHAR_DEL_CHAR_SPELL,
@@ -487,19 +496,20 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         {
             auto query = CharacterDatabase.GetPreparedStatement(statement);
             query->SetData(0, guid.GetCounter());
-            changed->Append(query);
+            trans->Append(query);
         }
-        player->SaveToDB(changed, false, true);
+        player->SaveToDB(trans, false, true);
 
         auto const& location = RaceStart.at(race);
-        Player::SavePositionInDB(WorldLocation(location.map, location.x, location.y, location.z, location.o), 0, guid, changed);
+        Player::SavePositionInDB(WorldLocation(location.map, location.x, location.y, location.z, location.o), 0, guid, trans);
+        CharacterDatabase.CommitTransaction(trans);
     }
     auto token = ByteArrayToHexStr(Acore::Crypto::GetRandomBytes<16>());
     WorldSession* session = player->GetSession();
     uint32 accountId = session ? session->GetAccountId() : 0;
     uint32 totalTimePlayed = player->GetTotalPlayedTime();
     if (session)
-        session->LogoutPlayer(false);
+        session->LogoutPlayer(true);
     PrestigioDatabase::Instance().Save(guid.GetCounter(), accountId, name, previousLevel, playerClass, race,
         totalTimePlayed, token, baseline, changed, cancelled, [this, guid, name, previousLevel](bool success, uint32 count)
     {
