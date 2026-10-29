@@ -1,12 +1,127 @@
+# ==============================================================================================
+# SISTEMA DE PRESTIGIO HOLLOW - CONFIGURACION
+# ==============================================================================================
+#
+# Este modulo permite a los jugadores que han alcanzado el nivel requerido volver a nivel 1,
+# conservando su equipo (guardado en bolsas) y gestionando sus habilidades, monturas y recetas
+# segun la configuracion de retencion seleccionada.
+#
+# NOTA SOBRE CLASES:
+#   Los Caballeros de la Muerte (Death Knights) no son elegibles para prestigiar, ya que
+#   reiniciarlos a nivel 1 afecta sus arboles de talentos, runas y misiones iniciales.
+#
+# NOTA SOBRE BASE DE DATOS:
+#   Todas las tablas del sistema de prestigio residen EXCLUSIVAMENTE en su propia base
+#   de datos dedicada (por defecto 'prestigio'). Nada se almacena en characters, auth ni world.
+#
+#   Las recompensas por prestigio y los hechizos identificadores de nivel 1-79 se configuran
+#   directamente en las tablas de la base de datos 'prestigio':
+#     - mod_prestigio_hollow_spells  (Spells permanentes del 1 al 79 por rango de prestigio)
+#     - mod_prestigio_hollow_rewards (Multiples recompensas configurables por rango)
+#
+# ==============================================================================================
+
 [worldserver]
+
+###################################################################################################
+# CONFIGURACION GENERAL
+###################################################################################################
+
+#
+#    PrestigioHollow.Enable
+#        Descripcion: Activa o desactiva completamente el sistema de prestigio.
+#        Por defecto: 1 (Activado)
+#                     0 (Desactivado)
+#
+
 PrestigioHollow.Enable = 1
-# La base mod_prestigio_hollow debe estar en la misma instancia MySQL que characters.
-# Un trabajador propio usa CharacterDatabaseInfo para guardar ambas bases atomicamente.
-# El usuario de characters requiere SELECT, INSERT, UPDATE sobre mod_prestigio_hollow.*.
-# La antigua opcion PrestigioHollow.DatabaseInfo ya no se lee.
+
+#
+#    PrestigioHollow.DatabaseInfo
+#        Descripcion: Cadena de conexion MySQL para el sistema de prestigio.
+#                     Si se deja vacia (""), utilizara la conexion de CharacterDatabaseInfo.
+#        Formato:     "hostname;port;username;password;database"
+#        Por defecto: ""
+#
+
+PrestigioHollow.DatabaseInfo = ""
+
+#
+#    PrestigioHollow.DatabaseName
+#        Descripcion: Nombre de la base de datos exclusiva del sistema de prestigio.
+#        Por defecto: "prestigio"
+#
+
+PrestigioHollow.DatabaseName = "prestigio"
+
+#
+#    PrestigioHollow.SysAlas.Database
+#        Descripcion: Nombre de la base de datos del sistema SysAlas para bloquear
+#                     la activacion de alas durante el leveo de prestigio (niveles 1 a 79).
+#        Por defecto: "sysalas"
+#
+
+PrestigioHollow.SysAlas.Database = "sysalas"
+
+#
+#    PrestigioHollow.RequiredLevel
+#        Descripcion: Nivel requerido para que un jugador pueda acceder a la opcion de prestigio.
+#        Rango:       2 a 255
+#        Por defecto: 80
+#
+
 PrestigioHollow.RequiredLevel = 80
+
+#
+#    PrestigioHollow.MaxPrestige
+#        Descripcion: Limite maximo de prestigios que un personaje puede realizar.
+#                     0 = Sin limite (puede prestigiar infinitas veces mientras suba de nivel).
+#                     N = Limite fijado (ej. 5 para un maximo de 5 prestigios).
+#        Por defecto: 0 (Sin limite)
+#
+
+PrestigioHollow.MaxPrestige = 0
+
+#
+#    PrestigioHollow.AnnounceWorld
+#        Descripcion: Envia un mensaje global a todo el servidor cuando un jugador realiza prestigio.
+#        Por defecto: 1 (Activado)
+#                     0 (Desactivado)
+#
+
 PrestigioHollow.AnnounceWorld = 1
-# El equipo va siempre a las bolsas, con un hueco compatible por pieza.
-# MailEquippedItems ya no se lee. Al confirmar se vuelve a seleccion de personajes.
-PrestigioHollow.GiveStartingOutfit = 1
-PrestigioHollow.PreservePermanentSpells = 1
+
+#
+#    PrestigioHollow.GiveStartingOutfit
+#        Descripcion: Si esta activado, entrega el conjunto de ropa y armas iniciales de nivel 1
+#                     correspondientes a la raza y clase del personaje al realizar prestigio
+#                     (unicamente piezas que el jugador no tenga ya en su posesion o banco).
+#                     El equipo anterior se desequipa y se guarda de forma segura en las bolsas.
+#        Por defecto: 0 (Desactivado - Recomendado para evitar duplicados en las bolsas)
+#                     1 (Activado)
+#
+
+PrestigioHollow.GiveStartingOutfit = 0
+
+#
+#    PrestigioHollow.RemoveTransmogOnPrestige
+#        Descripcion: Si esta activado (1), al realizar prestigio se eliminan las transfiguraciones
+#                     activas del equipo del personaje para evitar que mantenga apariencias visuales
+#                     al volver a nivel 1 sin equipo equipado.
+#        Por defecto: 1 (Activado)
+#                     0 (Desactivado)
+#
+
+PrestigioHollow.RemoveTransmogOnPrestige = 1
+
+#
+#    PrestigioHollow.PreservePermanentSpells
+#        Descripcion: Modo de conservacion de profesiones, recetas, equitacion y monturas:
+#                     0 = Se eliminan permanentemente.
+#                     1 = Se conservan activas desde nivel 1.
+#                     2 = MODO RETENCION: Se guardan en la base de datos 'prestigio' durante
+#                         los niveles 1-79 y se restauran automaticamente al llegar a nivel 80.
+#        Por defecto: 2 (Modo Retencion)
+#
+
+PrestigioHollow.PreservePermanentSpells = 2

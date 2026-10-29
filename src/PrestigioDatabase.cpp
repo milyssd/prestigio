@@ -1,4 +1,5 @@
 #include "PrestigioDatabase.h"
+#include "PrestigioHollow.h"
 #include "Log.h"
 #include "MySQLWorkaround.h"
 #include "PreparedStatement.h"
@@ -14,10 +15,6 @@
 
 namespace
 {
-constexpr char Stats[] = "`mod_prestigio_hollow`.`mod_prestigio_hollow_stats`";
-constexpr char Operations[] = "`mod_prestigio_hollow`.`mod_prestigio_hollow_operations`";
-constexpr char History[] = "`mod_prestigio_hollow`.`mod_prestigio_hollow_history`";
-
 class PrestigeConnection final : public CharacterDatabaseConnection
 {
 public:
@@ -113,36 +110,60 @@ QueryResult Query(PrestigeConnection& connection, std::string const& sql)
     return result;
 }
 
-bool SchemaReady(PrestigeConnection& connection)
+inline std::string Table(std::string const& db, std::string const& tbl)
 {
-    Query(connection, std::string("SELECT player_guid,prestige_count FROM ") + Stats + " LIMIT 0");
-    Query(connection, std::string("SELECT operation_id,player_guid,prestige_number,prestiged_at,previous_level,class,race FROM ") + History + " LIMIT 0");
-    Query(connection, std::string("SELECT operation_id,player_guid,completed,prestige_count FROM ") + Operations + " LIMIT 0");
-    if (connection.failed)
-        return false;
-    auto engines = Query(connection,
-        "SELECT COUNT(*),COUNT(IF(ENGINE='InnoDB',1,NULL)) FROM information_schema.TABLES "
-        "WHERE TABLE_SCHEMA='mod_prestigio_hollow' AND TABLE_NAME IN ('mod_prestigio_hollow_stats','mod_prestigio_hollow_history','mod_prestigio_hollow_operations')");
-    if (!engines || engines->Fetch()[0].Get<uint64>() != 3 || engines->Fetch()[1].Get<uint64>() != 3)
-        return false;
-    auto native = Query(connection,
-        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND ENGINE<>'InnoDB' "
-        "AND (TABLE_NAME='characters' OR LEFT(TABLE_NAME,10)='character_' OR TABLE_NAME IN ('item_instance','mail','mail_items'))");
-    if (!native || native->Fetch()[0].Get<uint64>() != 0)
-        return false;
-    // Validate write grants without creating dummy rows or changing player data.
-    return connection.Execute(std::string("INSERT INTO ") + Stats + " (player_guid,prestige_count) SELECT 0,0 WHERE FALSE") &&
-        connection.Execute(std::string("UPDATE ") + Stats + " SET prestige_count=prestige_count WHERE FALSE") &&
-        connection.Execute(std::string("INSERT INTO ") + History +
-            " (player_guid,prestige_number,previous_level,class,race,operation_id) SELECT 0,0,0,0,0,NULL WHERE FALSE") &&
-        connection.Execute(std::string("INSERT INTO ") + Operations +
-            " (operation_id,player_guid,completed,prestige_count) SELECT '',0,0,0 WHERE FALSE");
+    return "`" + db + "`.`" + tbl + "`";
 }
 
-bool ReadCount(PrestigeConnection& connection, uint32 guid, uint32& count)
+bool SchemaReady(PrestigeConnection& connection, std::string const& db)
+{
+    // Garantizar que la base de datos exclusiva del sistema de prestigio exista
+    connection.Execute("CREATE DATABASE IF NOT EXISTS `" + db + "` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+
+    // Garantizar que todas las tablas del modulo existan en la base de datos 'prestigio'
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_stats") + " ("
+        "`player_guid` INT UNSIGNED NOT NULL, `prestige_count` INT UNSIGNED NOT NULL DEFAULT 0, "
+        "`last_prestiged_at` TIMESTAMP NULL DEFAULT NULL, PRIMARY KEY (`player_guid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_history") + " ("
+        "`history_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, `operation_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL, "
+        "`player_guid` INT UNSIGNED NOT NULL, `account_id` INT UNSIGNED NOT NULL DEFAULT 0, "
+        "`player_name` VARCHAR(12) NOT NULL DEFAULT '', `prestige_number` INT UNSIGNED NOT NULL, "
+        "`prestiged_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, `previous_level` TINYINT UNSIGNED NOT NULL, "
+        "`class` TINYINT UNSIGNED NOT NULL, `race` TINYINT UNSIGNED NOT NULL, `total_time_played` INT UNSIGNED NOT NULL DEFAULT 0, "
+        "PRIMARY KEY (`history_id`), UNIQUE KEY `uq_prestigio_operation` (`operation_id`), "
+        "KEY `idx_player_guid` (`player_guid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_operations") + " ("
+        "`operation_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL, `player_guid` INT UNSIGNED NOT NULL, "
+        "`completed` TINYINT UNSIGNED NOT NULL, `prestige_count` INT UNSIGNED NOT NULL, "
+        "`created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (`operation_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_spells") + " ("
+        "`prestige_level` INT UNSIGNED NOT NULL, `spell_id` INT UNSIGNED NOT NULL, "
+        "PRIMARY KEY (`prestige_level`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_rewards") + " ("
+        "`id` INT UNSIGNED NOT NULL AUTO_INCREMENT, `prestige_level` INT UNSIGNED NOT NULL, "
+        "`reward_item_id` INT UNSIGNED NOT NULL DEFAULT 0, `reward_item_count` INT UNSIGNED NOT NULL DEFAULT 1, "
+        "PRIMARY KEY (`id`), KEY `idx_prestige_level` (`prestige_level`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_retention_skills") + " ("
+        "`player_guid` INT UNSIGNED NOT NULL, `skill_id` INT UNSIGNED NOT NULL, "
+        "`step` SMALLINT UNSIGNED NOT NULL, `value` SMALLINT UNSIGNED NOT NULL, `maximum` SMALLINT UNSIGNED NOT NULL, "
+        "PRIMARY KEY (`player_guid`, `skill_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    connection.Execute("CREATE TABLE IF NOT EXISTS " + Table(db, "mod_prestigio_hollow_retention_spells") + " ("
+        "`player_guid` INT UNSIGNED NOT NULL, `spell_id` INT UNSIGNED NOT NULL, "
+        "`spell_type` TINYINT UNSIGNED NOT NULL DEFAULT 0, PRIMARY KEY (`player_guid`, `spell_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    return true;
+}
+
+bool ReadCount(PrestigeConnection& connection, std::string const& db, uint32 guid, uint32& count)
 {
     count = 0;
-    auto result = Query(connection, std::string("SELECT prestige_count FROM ") + Stats + " WHERE player_guid=" + std::to_string(guid));
+    auto result = Query(connection, "SELECT prestige_count FROM " + Table(db, "mod_prestigio_hollow_stats") + " WHERE player_guid=" + std::to_string(guid));
     if (connection.failed)
         return false;
     if (result)
@@ -152,10 +173,15 @@ bool ReadCount(PrestigeConnection& connection, uint32 guid, uint32& count)
 
 enum class Outcome { Committed, Cancelled, Aborted, Unknown };
 
-Outcome SaveOnce(PrestigeConnection& connection, uint32 guid, uint8 previousLevel, uint8 playerClass,
-    uint8 race, std::string const& operationId, PrestigeSaveTransaction const& baseline,
+Outcome SaveOnce(PrestigeConnection& connection, std::string const& db, uint32 guid, uint32 accountId, std::string const& playerName,
+    uint8 previousLevel, uint8 playerClass, uint8 race, uint32 totalTimePlayed,
+    std::string const& operationId, PrestigeSaveTransaction const& baseline,
     PrestigeSaveTransaction const& transaction, bool cancelOnly, uint32& count)
 {
+    std::string const Stats = Table(db, "mod_prestigio_hollow_stats");
+    std::string const Operations = Table(db, "mod_prestigio_hollow_operations");
+    std::string const History = Table(db, "mod_prestigio_hollow_history");
+
     if (!connection.Execute("START TRANSACTION"))
         return Outcome::Unknown;
     auto cancel = [&connection]()
@@ -163,11 +189,11 @@ Outcome SaveOnce(PrestigeConnection& connection, uint32 guid, uint8 previousLeve
         return connection.Execute("ROLLBACK") ? Outcome::Aborted : Outcome::Unknown;
     };
     auto id = std::to_string(guid);
-    if (!connection.Execute(std::string("INSERT INTO ") + Stats + " (player_guid,prestige_count) VALUES(" + id +
+    if (!connection.Execute("INSERT INTO " + Stats + " (player_guid,prestige_count) VALUES(" + id +
         ",0) ON DUPLICATE KEY UPDATE player_guid=VALUES(player_guid)"))
         return cancel();
-    // The row lock serializes retries with an earlier connection whose COMMIT response was lost.
-    auto receipt = Query(connection, std::string("SELECT completed,prestige_count FROM ") + Operations +
+
+    auto receipt = Query(connection, "SELECT completed,prestige_count FROM " + Operations +
         " WHERE operation_id='" + operationId + "' AND player_guid=" + id);
     if (connection.failed)
         return cancel();
@@ -178,9 +204,11 @@ Outcome SaveOnce(PrestigeConnection& connection, uint32 guid, uint8 previousLeve
         connection.Execute("ROLLBACK");
         return completed ? Outcome::Committed : Outcome::Cancelled;
     }
+
     uint32 old = 0;
-    if (!ReadCount(connection, guid, old) || (!cancelOnly && old == std::numeric_limits<uint32>::max()))
+    if (!ReadCount(connection, db, guid, old) || (!cancelOnly && old == std::numeric_limits<uint32>::max()))
         return cancel();
+
     auto execute = [&connection](PrestigeSaveTransaction const& captured)
     {
         for (auto const& statement : captured.Statements())
@@ -193,23 +221,37 @@ Outcome SaveOnce(PrestigeConnection& connection, uint32 guid, uint8 previousLeve
         }
         return true;
     };
-    // The original save inserts any unsaved NEW items before the reset's updates.
-    // On a rejected reset, this same snapshot restores the last live character state.
-    if (!execute(baseline) || (!cancelOnly && !execute(transaction)))
+
+    auto const& toExecute = cancelOnly ? baseline : transaction;
+    if (!execute(toExecute))
         return cancel();
+
     uint32 next = cancelOnly ? old : old + 1;
-    if (!cancelOnly && (!connection.Execute(std::string("UPDATE ") + Stats + " SET prestige_count=" + std::to_string(next) + " WHERE player_guid=" + id) ||
-        !connection.Execute(std::string("INSERT INTO ") + History +
-            " (player_guid,prestige_number,previous_level,class,race,operation_id) VALUES(" + id + "," + std::to_string(next) +
-            "," + std::to_string(previousLevel) + "," + std::to_string(playerClass) + "," + std::to_string(race) + ",'" + operationId + "')")))
-        return cancel();
-    if (!connection.Execute(std::string("INSERT INTO ") + Operations +
+    if (!cancelOnly)
+    {
+        std::string safeName = playerName;
+        safeName.erase(std::remove_if(safeName.begin(), safeName.end(), [](char c) {
+            return c == '\'' || c == '\\' || c == '"';
+        }), safeName.end());
+
+        if (!connection.Execute("UPDATE " + Stats + " SET prestige_count=" + std::to_string(next) +
+                ", last_prestiged_at=NOW() WHERE player_guid=" + id) ||
+            !connection.Execute("INSERT INTO " + History +
+                " (player_guid,account_id,player_name,prestige_number,previous_level,class,race,total_time_played,operation_id) "
+                "VALUES(" + id + "," + std::to_string(accountId) + ",'" + safeName + "'," + std::to_string(next) +
+                "," + std::to_string(previousLevel) + "," + std::to_string(playerClass) + "," + std::to_string(race) +
+                "," + std::to_string(totalTimePlayed) + ",'" + operationId + "')"))
+            return cancel();
+    }
+
+    if (!connection.Execute("INSERT INTO " + Operations +
         " (operation_id,player_guid,completed,prestige_count) VALUES('" + operationId + "'," + id + "," +
         (cancelOnly ? "0" : "1") + "," + std::to_string(next) + ")"))
         return cancel();
-    // Unlike ExecuteTransaction, check COMMIT and resolve an unknown result with the durable receipt.
+
     if (!connection.Execute("COMMIT"))
         return Outcome::Unknown;
+
     count = next;
     return cancelOnly ? Outcome::Cancelled : Outcome::Committed;
 }
@@ -226,6 +268,8 @@ struct PrestigioDatabase::Impl
     std::atomic<bool> enabled{true};
     bool stopping = true;
     std::string settings;
+    std::string databaseName{"prestigio"};
+    std::string sysAlasDb{"sysalas"};
     std::unique_ptr<MySQLConnectionInfo> info;
     std::unique_ptr<PrestigeConnection> connection;
 
@@ -236,18 +280,19 @@ struct PrestigioDatabase::Impl
         ready = false;
         connection.reset();
         info = std::make_unique<MySQLConnectionInfo>(settings);
-        if (info->database.empty() || info->database == "mod_prestigio_hollow" || info->user.empty())
+        if (info->database.empty() || info->user.empty())
             return false;
         connection = std::make_unique<PrestigeConnection>(*info);
-        if (connection->Open() || !SchemaReady(*connection))
+        if (connection->Open() || !SchemaReady(*connection, databaseName))
         {
             connection.reset();
-            LOG_ERROR("module", "mod-prestigio-hollow: revisar SQL atomico, InnoDB y permisos sobre la base propia en la instancia de personajes.");
+            LOG_ERROR("module", "mod-prestigio-hollow: no se pudo inicializar schema en base de datos '{}'.", databaseName);
             return false;
         }
         ready = true;
         return true;
     }
+
     bool Enqueue(Job job)
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -257,11 +302,13 @@ struct PrestigioDatabase::Impl
         wake.notify_one();
         return true;
     }
+
     void Complete(Job job)
     {
         std::lock_guard<std::mutex> lock(mutex);
         completed.push_back(std::move(job));
     }
+
     void Run()
     {
         if (enabled)
@@ -312,14 +359,18 @@ struct PrestigioDatabase::Impl
 PrestigioDatabase::PrestigioDatabase() : _impl(std::make_unique<Impl>()) { }
 PrestigioDatabase::~PrestigioDatabase() { Stop(); }
 PrestigioDatabase& PrestigioDatabase::Instance() { static PrestigioDatabase database; return database; }
-void PrestigioDatabase::Start(std::string const& characterConnectionInfo, bool enabled)
+
+void PrestigioDatabase::Start(std::string const& connectionInfo, std::string const& dbName, std::string const& sysAlasDb, bool enabled)
 {
     Stop();
-    _impl->settings = characterConnectionInfo;
+    _impl->settings = connectionInfo;
+    _impl->databaseName = dbName.empty() ? "prestigio" : dbName;
+    _impl->sysAlasDb = sysAlasDb.empty() ? "sysalas" : sysAlasDb;
     _impl->enabled = enabled;
     _impl->stopping = false;
     _impl->worker = std::thread([this]() { _impl->Run(); });
 }
+
 void PrestigioDatabase::SetEnabled(bool enabled)
 {
     _impl->enabled = enabled;
@@ -327,6 +378,7 @@ void PrestigioDatabase::SetEnabled(bool enabled)
         _impl->ready = false;
     _impl->wake.notify_one();
 }
+
 void PrestigioDatabase::Stop()
 {
     {
@@ -341,7 +393,9 @@ void PrestigioDatabase::Stop()
     _impl->jobs.clear();
     _impl->completed.clear();
 }
+
 bool PrestigioDatabase::IsReady() const { return _impl->ready; }
+
 void PrestigioDatabase::Poll()
 {
     std::deque<Impl::Job> completed;
@@ -352,6 +406,7 @@ void PrestigioDatabase::Poll()
     for (auto& callback : completed)
         callback();
 }
+
 void PrestigioDatabase::GetCount(uint32 guid, CountCallback callback)
 {
     if (!_impl->Enqueue([this, guid, callback]()
@@ -360,23 +415,83 @@ void PrestigioDatabase::GetCount(uint32 guid, CountCallback callback)
         bool success = false;
         for (unsigned attempt = 0; attempt < 2 && !success; ++attempt)
             if (_impl->enabled && _impl->Connect())
-                success = ReadCount(*_impl->connection, guid, count);
+                success = ReadCount(*_impl->connection, _impl->databaseName, guid, count);
         _impl->ready = success;
         _impl->Complete([callback, success, count]() { callback(success, count); });
     }))
         _impl->Complete([callback]() { callback(false, 0); });
 }
+
 void PrestigioDatabase::Check(std::function<void(bool)> callback)
 {
     if (!_impl->Enqueue([this, callback]()
     {
-        bool success = _impl->enabled && _impl->Connect() && SchemaReady(*_impl->connection);
+        bool success = _impl->enabled && _impl->Connect() && SchemaReady(*_impl->connection, _impl->databaseName);
         _impl->ready = success;
         _impl->Complete([callback, success]() { callback(success); });
     }))
         _impl->Complete([callback]() { callback(false); });
 }
-void PrestigioDatabase::Save(uint32 guid, uint8 previousLevel, uint8 playerClass, uint8 race,
+
+void PrestigioDatabase::LoadConfigData(ConfigCallback callback)
+{
+    _impl->Enqueue([this, callback]()
+    {
+        std::unordered_map<uint32, uint32> spells;
+        std::unordered_map<uint32, std::vector<PrestigeDbReward>> rewards;
+        std::unordered_set<uint32> sysAlasSpells;
+        bool success = false;
+
+        if (_impl->Connect())
+        {
+            success = true;
+            // 1. Cargar spells permanentes para niveles 1-79
+            auto spellRes = Query(*_impl->connection, "SELECT prestige_level, spell_id FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_spells"));
+            if (spellRes)
+            {
+                do
+                {
+                    Field* fields = spellRes->Fetch();
+                    spells[fields[0].Get<uint32>()] = fields[1].Get<uint32>();
+                } while (spellRes->NextRow());
+            }
+
+            // 2. Cargar multiples recompensas por nivel de prestigio
+            auto rewRes = Query(*_impl->connection, "SELECT prestige_level, reward_item_id, reward_item_count FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_rewards") + " ORDER BY id ASC");
+            if (rewRes)
+            {
+                do
+                {
+                    Field* fields = rewRes->Fetch();
+                    uint32 level = fields[0].Get<uint32>();
+                    uint32 itemId = fields[1].Get<uint32>();
+                    uint32 count = fields[2].Get<uint32>();
+                    if (itemId > 0)
+                        rewards[level].push_back({itemId, count ? count : 1});
+                } while (rewRes->NextRow());
+            }
+
+            // 3. Cargar auras de alas de SysAlas (si la tabla existe)
+            auto wingsRes = Query(*_impl->connection, "SELECT aura_id FROM " + Table(_impl->sysAlasDb, "sysalas_wings") + " WHERE aura_id > 0");
+            if (wingsRes)
+            {
+                do
+                {
+                    Field* fields = wingsRes->Fetch();
+                    sysAlasSpells.insert(fields[0].Get<uint32>());
+                } while (wingsRes->NextRow());
+            }
+        }
+
+        _impl->Complete([callback, success, spells, rewards, sysAlasSpells]() mutable
+        {
+            callback(success, std::move(spells), std::move(rewards), std::move(sysAlasSpells));
+        });
+    });
+}
+
+void PrestigioDatabase::Save(uint32 guid, uint32 accountId, std::string const& playerName,
+    uint8 previousLevel, uint8 playerClass, uint8 race, uint32 totalTimePlayed,
     std::string operationId, std::shared_ptr<PrestigeSaveTransaction> baseline,
     std::shared_ptr<PrestigeSaveTransaction> transaction, bool cancelOnly, CountCallback callback)
 {
@@ -386,9 +501,9 @@ void PrestigioDatabase::Save(uint32 guid, uint8 previousLevel, uint8 playerClass
         _impl->Complete([callback]() { callback(false, 0); });
         return;
     }
-    // A captured character is already offline. Never discard its save because the read queue is full.
+
     std::lock_guard<std::mutex> lock(_impl->mutex);
-    _impl->saves.push_back([this, guid, previousLevel, playerClass, race, operationId = std::move(operationId), baseline, transaction, cancelOnly, callback]() mutable
+    _impl->saves.push_back([this, guid, accountId, playerName, previousLevel, playerClass, race, totalTimePlayed, operationId = std::move(operationId), baseline, transaction, cancelOnly, callback]() mutable
     {
         uint32 count = 0;
         unsigned aborted = 0;
@@ -396,8 +511,8 @@ void PrestigioDatabase::Save(uint32 guid, uint8 previousLevel, uint8 playerClass
         {
             if (_impl->Connect())
             {
-                auto outcome = SaveOnce(*_impl->connection, guid, previousLevel, playerClass, race,
-                    operationId, *baseline, *transaction, cancelOnly, count);
+                auto outcome = SaveOnce(*_impl->connection, _impl->databaseName, guid, accountId, playerName, previousLevel, playerClass, race,
+                    totalTimePlayed, operationId, *baseline, *transaction, cancelOnly, count);
                 if (outcome == Outcome::Committed || outcome == Outcome::Cancelled)
                 {
                     bool success = outcome == Outcome::Committed;
@@ -410,12 +525,101 @@ void PrestigioDatabase::Save(uint32 guid, uint8 previousLevel, uint8 playerClass
                 _impl->connection.reset();
                 _impl->ready = false;
             }
-            // An unknown result must remain pending until the receipt/row lock resolves it.
-            // World updates continue; only this character's login is held back.
             std::unique_lock<std::mutex> guard(_impl->mutex);
             if (_impl->wake.wait_for(guard, std::chrono::seconds(2), [this]() { return _impl->stopping; }))
                 return;
         }
     });
     _impl->wake.notify_one();
+}
+
+void PrestigioDatabase::SaveRetention(uint32 guid, std::vector<SavedSkillData> const& skills, std::vector<uint32> const& spells)
+{
+    _impl->Enqueue([this, guid, skills, spells]()
+    {
+        if (!_impl->Connect())
+            return;
+
+        std::string id = std::to_string(guid);
+        _impl->connection->Execute("DELETE FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_skills") + " WHERE player_guid=" + id);
+        _impl->connection->Execute("DELETE FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_spells") + " WHERE player_guid=" + id);
+
+        for (auto const& sk : skills)
+        {
+            _impl->connection->Execute("INSERT INTO " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_skills") +
+                " (player_guid, skill_id, step, value, maximum) VALUES (" +
+                id + "," + std::to_string(sk.id) + "," + std::to_string(sk.step) + "," +
+                std::to_string(sk.value) + "," + std::to_string(sk.maximum) + ")");
+        }
+
+        for (uint32 spellId : spells)
+        {
+            _impl->connection->Execute("INSERT INTO " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_spells") +
+                " (player_guid, spell_id, spell_type) VALUES (" + id + "," + std::to_string(spellId) + ", 0)");
+        }
+    });
+}
+
+void PrestigioDatabase::LoadRetention(uint32 guid, RetentionCallback callback)
+{
+    _impl->Enqueue([this, guid, callback]()
+    {
+        std::vector<SavedSkillData> skills;
+        std::vector<uint32> spells;
+        bool success = false;
+
+        if (_impl->Connect())
+        {
+            std::string id = std::to_string(guid);
+            auto skRes = Query(*_impl->connection, "SELECT skill_id, step, value, maximum FROM " +
+                Table(_impl->databaseName, "mod_prestigio_hollow_retention_skills") + " WHERE player_guid=" + id);
+            if (skRes)
+            {
+                do
+                {
+                    Field* f = skRes->Fetch();
+                    skills.push_back({f[0].Get<uint32>(), f[1].Get<uint16>(), f[2].Get<uint16>(), f[3].Get<uint16>()});
+                } while (skRes->NextRow());
+            }
+
+            auto spRes = Query(*_impl->connection, "SELECT spell_id FROM " +
+                Table(_impl->databaseName, "mod_prestigio_hollow_retention_spells") + " WHERE player_guid=" + id);
+            if (spRes)
+            {
+                do
+                {
+                    Field* f = spRes->Fetch();
+                    spells.push_back(f[0].Get<uint32>());
+                } while (spRes->NextRow());
+            }
+            success = true;
+        }
+
+        _impl->Complete([callback, success, skills, spells]() mutable
+        {
+            callback(success, std::move(skills), std::move(spells));
+        });
+    });
+}
+
+void PrestigioDatabase::ClearRetention(uint32 guid)
+{
+    _impl->Enqueue([this, guid]()
+    {
+        if (!_impl->Connect())
+            return;
+        std::string id = std::to_string(guid);
+        _impl->connection->Execute("DELETE FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_skills") + " WHERE player_guid=" + id);
+        _impl->connection->Execute("DELETE FROM " + Table(_impl->databaseName, "mod_prestigio_hollow_retention_spells") + " WHERE player_guid=" + id);
+    });
+}
+
+void PrestigioDatabase::PurgeSysAlasActive(uint32 guid)
+{
+    _impl->Enqueue([this, guid]()
+    {
+        if (!_impl->Connect())
+            return;
+        _impl->connection->Execute("DELETE FROM " + Table(_impl->sysAlasDb, "sysalas_active") + " WHERE guid=" + std::to_string(guid));
+    });
 }

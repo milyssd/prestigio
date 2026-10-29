@@ -1,6 +1,6 @@
 -- ==============================================================
 -- Chromie NPC (Prestigio Hollow) for AzerothCore
--- Target Database: acore_world
+-- Target Database: acore_world (DBUpdater de AzerothCore)
 -- Entry: 2069426 | ScriptName: npc_prestigio_hollow
 -- ==============================================================
 
@@ -17,7 +17,7 @@ INSERT INTO `creature_template` (
     `flags_extra`, `ScriptName`, `VerifiedBuild`
 ) VALUES (
     2069426, 0, 0, 0, 0, 0,
-    'Chromie', 'Embajadora de Prestigio Hollow', '', 0, 80, 80, 0, 35, 1,
+    'Chromie', 'Embajadora de Prestigio Hollow', '', 2069426, 80, 80, 0, 35, 1,
     1, 1.14286, 1, 1, 20, 0, 0,
     1, 2000, 2000, 1, 1,
     1, 0, 0, 0, 0, 7, 0,
@@ -41,10 +41,13 @@ INSERT INTO `creature` (`id1`, `map`, `zoneId`, `areaId`, `spawnMask`, `phaseMas
 INSERT INTO `creature` (`id1`, `map`, `zoneId`, `areaId`, `spawnMask`, `phaseMask`, `equipment_id`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`, `wander_distance`, `currentwaypoint`, `curhealth`, `curmana`, `MovementType`, `npcflag`, `unit_flags`, `dynamicflags`, `ScriptName`, `Comment`) VALUES
 (2069426, 0, 1, 0, 1, 1, 0, -5025.6, -813.51, 495.406, 3.55579, 300, 0, 0, 1000, 1000, 0, 1, 0, 0, 'npc_prestigio_hollow', 'Chromie Ironforge');
 
+-- Spawn: Dalaran
+INSERT INTO `creature` (`id1`, `map`, `zoneId`, `areaId`, `spawnMask`, `phaseMask`, `equipment_id`, `position_x`, `position_y`, `position_z`, `orientation`, `spawntimesecs`, `wander_distance`, `currentwaypoint`, `curhealth`, `curmana`, `MovementType`, `npcflag`, `unit_flags`, `dynamicflags`, `ScriptName`, `Comment`) VALUES
+(2069426, 571, 4395, 0, 1, 1, 0, 5818.81, 426.866, 658.778, 0, 300, 0, 0, 1000, 1000, 0, 1, 0, 0, 'npc_prestigio_hollow', 'Chromie Dalaran');
+
 -- Base de datos: acore_world. NPC del módulo: entry 2069426.
--- Conserva el NPC y sus apariciones; no elimina objetos ni personajes.
 INSERT INTO `npc_text` (`ID`, `text0_0`, `text0_1`, `Probability0`) VALUES
-(2069426, 'Bienvenido al Prestigio Hollow. Al alcanzar el nivel requerido puedes volver a nivel 1. Tu equipo se guardará en tus bolsas: libera un hueco por pieza equipada antes de confirmar.', '', 1)
+(2069426, 'Bienvenido al Prestigio Hollow. Al alcanzar el nivel requerido puedes volver a nivel 1 (los Caballeros de la Muerte no son elegibles). Tu equipo se guardará en tus bolsas: libera un hueco por pieza equipada antes de confirmar.', '', 1)
 ON DUPLICATE KEY UPDATE `text0_0`=VALUES(`text0_0`), `text0_1`=VALUES(`text0_1`), `Probability0`=VALUES(`Probability0`);
 
 DELETE FROM `gossip_menu` WHERE `MenuID` = 2069426;
@@ -53,7 +56,6 @@ INSERT INTO `gossip_menu` (`MenuID`, `TextID`) VALUES (2069426, 2069426);
 UPDATE `creature_template`
 SET `npcflag` = `npcflag` | 1, `AIName` = '',
     `ScriptName` = 'npc_prestigio_hollow', `gossip_menu_id` = 2069426
-WHERE `entry` = 2069426;
+    WHERE `entry` = 2069426;
 
--- El script se resuelve desde la plantilla; elimina overrides de la aparición.
 UPDATE `creature` SET `npcflag` = `npcflag` | 1, `ScriptName` = '' WHERE `id1` = 2069426;

@@ -8,6 +8,8 @@
 #include "WorldSession.h"
 #include "WorldPacket.h"
 #include "Opcodes.h"
+#include "Spell.h"
+#include "SpellInfo.h"
 
 constexpr uint32 PH_GOSSIP_TEXT = 2069426;
 
@@ -39,13 +41,24 @@ void ShowPrestigeMenu(Player* player, Creature* creature, std::optional<uint32> 
     AddGossipItemFor(player, GOSSIP_ICON_CHAT, counter, GOSSIP_SENDER_MAIN, PH_INFO);
     if (sPrestigioHollowMgr->IsEnabled())
     {
-        std::string label = "Volver a nivel 1 - Prestigio Hollow";
-        if (player->GetLevel() < sPrestigioHollowMgr->GetRequiredLevel())
-            label += " (requiere nivel " + std::to_string(sPrestigioHollowMgr->GetRequiredLevel()) + ")";
-        AddGossipItemFor(player, GOSSIP_ICON_BATTLE, label, GOSSIP_SENDER_MAIN, PH_PRESTIGE);
+        if (player->getClass() == CLASS_DEATH_KNIGHT)
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Los Caballeros de la Muerte no pueden prestigiar.", GOSSIP_SENDER_MAIN, PH_INFO);
+        }
+        else if (sPrestigioHollowMgr->GetMaxPrestige() > 0 && count && *count >= sPrestigioHollowMgr->GetMaxPrestige())
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Has alcanzado el nivel maximo de prestigios (" + std::to_string(sPrestigioHollowMgr->GetMaxPrestige()) + ").", GOSSIP_SENDER_MAIN, PH_INFO);
+        }
+        else
+        {
+            std::string label = "Volver a nivel 1 - Prestigio Hollow";
+            if (player->GetLevel() < sPrestigioHollowMgr->GetRequiredLevel())
+                label += " (requiere nivel " + std::to_string(sPrestigioHollowMgr->GetRequiredLevel()) + ")";
+            AddGossipItemFor(player, GOSSIP_ICON_BATTLE, label, GOSSIP_SENDER_MAIN, PH_PRESTIGE);
+        }
     }
     else
-        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "El modo prestigio está desactivado.", GOSSIP_SENDER_MAIN, PH_INFO);
+        AddGossipItemFor(player, GOSSIP_ICON_CHAT, "El modo prestigio esta desactivado.", GOSSIP_SENDER_MAIN, PH_INFO);
     AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Necesitas un hueco libre en tus bolsas por pieza equipada.", GOSSIP_SENDER_MAIN, PH_INFO);
     AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Cerrar", GOSSIP_SENDER_MAIN, PH_CLOSE);
     SendGossipMenuFor(player, PH_GOSSIP_TEXT, creature->GetGUID());
@@ -86,16 +99,15 @@ public:
 
             ClearGossipMenuFor(player);
             AddGossipItemFor(player, GOSSIP_ICON_CHAT,
-                "Volverás a nivel 1 y se borrarán las misiones activas y completadas. Tu equipo se guardará en tus bolsas. Volverás a la selección de personajes mientras se guarda.",
+                "Volveras a nivel 1 y se borraran las misiones activas y completadas. Tu equipo se guardara en tus bolsas. Volveras a la seleccion de personajes mientras se guarda.",
                 GOSSIP_SENDER_MAIN, PH_INFO);
             AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "CONFIRMAR PRESTIGIO", GOSSIP_SENDER_MAIN, PH_CONFIRM);
-            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Volver al menú principal (cancelar)", GOSSIP_SENDER_MAIN, PH_BACK);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Volver al menu principal (cancelar)", GOSSIP_SENDER_MAIN, PH_BACK);
             SendGossipMenuFor(player, PH_GOSSIP_TEXT, creature->GetGUID());
             return true;
         }
         if (action == PH_CONFIRM)
         {
-            // Failed checks report the cause and keep navigation available.
             if (!sPrestigioHollowMgr->Prestige(player))
                 return OnGossipHello(player, creature);
             CloseGossipMenuFor(player);
@@ -109,12 +121,144 @@ class PrestigioHollowPlayer : public PlayerScript
 {
 public:
     PrestigioHollowPlayer() : PlayerScript("PrestigioHollowPlayer") { }
-    void OnPlayerLogout(Player* player) override { sPrestigioHollowMgr->CancelMenuRequest(player->GetGUID().GetCounter()); }
-    void OnPlayerLogin(Player* player) override { sPrestigioHollowMgr->RepairDefaultLanguages(player); }
+
+    void OnPlayerLogout(Player* player) override
+    {
+        sPrestigioHollowMgr->CancelMenuRequest(player->GetGUID().GetCounter());
+    }
+
+    void OnPlayerLogin(Player* player) override
+    {
+        if (player->getClass() == CLASS_DEATH_KNIGHT)
+            return;
+
+        sPrestigioHollowMgr->RepairDefaultLanguages(player);
+
+        uint32 guid = player->GetGUID().GetCounter();
+        sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
+        {
+            if (!success)
+                return;
+
+            Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+            if (!p)
+                return;
+
+            if (p->GetLevel() >= 80)
+            {
+                // Al alcanzar el nivel 80 se remueve el spell identificador de prestigio
+                sPrestigioHollowMgr->RemovePrestigeSpell(p);
+                // Si tenia habilidades o monturas retenidas, se restauran
+                sPrestigioHollowMgr->RestoreRetainedData(p);
+            }
+            else if (count > 0)
+            {
+                // Niveles 1 al 79: asegurar personaje listo (spells iniciales, barras, stats, xp) y spell identificador
+                sPrestigioHollowMgr->EnsurePrestigedPlayerReady(p, count);
+                // Niveles 1 al 79: remover cualquier aura de alas de SysAlas
+                sPrestigioHollowMgr->RemoveSysAlasAuras(p);
+            }
+        });
+    }
+
     void OnPlayerLevelChanged(Player* player, uint8) override
     {
-        if (sPrestigioHollowMgr->IsEnabled() && player->GetLevel() == sPrestigioHollowMgr->GetRequiredLevel())
-            ChatHandler(player->GetSession()).PSendSysMessage("|cff8A2BE2[Prestigio Hollow]|r Ya puedes prestigiar.");
+        if (player->getClass() == CLASS_DEATH_KNIGHT)
+            return;
+
+        if (player->GetLevel() >= 80)
+        {
+            // 1. Quitar el spell identificador de prestigio (solo activo del 1 al 79)
+            sPrestigioHollowMgr->RemovePrestigeSpell(player);
+
+            // 2. Restaurar profesiones, recetas, monturas y companeros retenidos
+            sPrestigioHollowMgr->RestoreRetainedData(player);
+
+            if (sPrestigioHollowMgr->IsEnabled() && player->GetLevel() == sPrestigioHollowMgr->GetRequiredLevel())
+                ChatHandler(player->GetSession()).PSendSysMessage("|cff8A2BE2[Prestigio Hollow]|r ¡Felicidades por alcanzar el nivel 80! Ya puedes volver a prestigiar.");
+        }
+        else
+        {
+            // Niveles 1 al 79: asegurar que no tenga alas de SysAlas y tenga su spell de rango
+            uint32 guid = player->GetGUID().GetCounter();
+            sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
+            {
+                if (success && count > 0)
+                {
+                    Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+                    if (p && p->GetLevel() < 80)
+                    {
+                        sPrestigioHollowMgr->EnsurePrestigeSpell(p, count);
+                        sPrestigioHollowMgr->RemoveSysAlasAuras(p);
+                    }
+                }
+            });
+        }
+    }
+
+    void OnPlayerTalentsReset(Player* player, bool) override
+    {
+        if (player->getClass() == CLASS_DEATH_KNIGHT || player->GetLevel() >= 80)
+            return;
+
+        uint32 guid = player->GetGUID().GetCounter();
+        sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
+        {
+            if (success && count > 0)
+            {
+                Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+                if (p && p->GetLevel() < 80)
+                    sPrestigioHollowMgr->EnsurePrestigeSpell(p, count);
+            }
+        });
+    }
+
+    void OnPlayerReleasedGhost(Player* player) override
+    {
+        if (player->getClass() == CLASS_DEATH_KNIGHT || player->GetLevel() >= 80)
+            return;
+
+        uint32 guid = player->GetGUID().GetCounter();
+        sPrestigioDatabase->GetCount(guid, [guid](bool success, uint32 count)
+        {
+            if (success && count > 0)
+            {
+                Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+                if (p && p->GetLevel() < 80)
+                {
+                    sPrestigioHollowMgr->EnsurePrestigeSpell(p, count);
+                    sPrestigioHollowMgr->RemoveSysAlasAuras(p);
+                }
+            }
+        });
+    }
+
+    void OnPlayerSpellCast(Player* player, Spell* spell, bool) override
+    {
+        if (!player || player->GetLevel() >= 80 || !spell)
+            return;
+
+        SpellInfo const* spellInfo = spell->GetSpellInfo();
+        if (!spellInfo)
+            return;
+
+        // Si es un spell de SysAlas y el jugador esta en niveles 1 a 79 con prestigio activo
+        if (sPrestigioHollowMgr->IsSysAlasSpell(spellInfo->Id))
+        {
+            uint32 guid = player->GetGUID().GetCounter();
+            sPrestigioDatabase->GetCount(guid, [guid, spellInfo](bool success, uint32 count)
+            {
+                if (success && count > 0)
+                {
+                    Player* p = ObjectAccessor::FindConnectedPlayer(ObjectGuid::Create<HighGuid::Player>(guid));
+                    if (p && p->GetLevel() < 80)
+                    {
+                        sPrestigioHollowMgr->RemoveSysAlasAuras(p);
+                        ChatHandler(p->GetSession()).PSendSysMessage("|cffFF0000[SysAlas]|r No puedes activar alas mientras estas leveando en prestigio (niveles 1 a 79).");
+                    }
+                }
+            });
+        }
     }
 };
 
@@ -149,5 +293,5 @@ void AddPrestigioHollowScripts()
     new npc_prestigio_hollow();
     new PrestigioHollowPlayer();
     new PrestigioHollowServer();
-    LOG_INFO("module", "mod-prestigio-hollow: NPC npc_prestigio_hollow registrado (menu con volver/cancelar).");
+    LOG_INFO("module", "mod-prestigio-hollow: Modulo de prestigio inicializado correctamente con DB aislada.");
 }
