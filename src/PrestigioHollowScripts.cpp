@@ -45,6 +45,10 @@ void ShowPrestigeMenu(Player* player, Creature* creature, std::optional<uint32> 
         {
             AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Los Caballeros de la Muerte no pueden prestigiar.", GOSSIP_SENDER_MAIN, PH_INFO);
         }
+        else if (!sPrestigioHollowMgr->HasCompletedRequiredQuest(player))
+        {
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Debes completar la mision requerida para acceder al prestigio.", GOSSIP_SENDER_MAIN, PH_INFO);
+        }
         else if (sPrestigioHollowMgr->GetMaxPrestige() > 0 && count && *count >= sPrestigioHollowMgr->GetMaxPrestige())
         {
             AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Has alcanzado el nivel maximo de prestigios (" + std::to_string(sPrestigioHollowMgr->GetMaxPrestige()) + ").", GOSSIP_SENDER_MAIN, PH_INFO);
@@ -71,6 +75,28 @@ public:
     npc_prestigio_hollow() : CreatureScript("npc_prestigio_hollow") { }
     bool OnGossipHello(Player* player, Creature* creature) override
     {
+        if (creature->IsQuestGiver())
+        {
+            player->PrepareQuestMenu(creature->GetGUID());
+            if (!sPrestigioHollowMgr->HasCompletedRequiredQuest(player))
+            {
+                if (player->PlayerTalkClass->GetQuestMenu().GetMenuItemCount() > 0)
+                {
+                    player->SendPreparedQuest(creature->GetGUID());
+                    return true;
+                }
+            }
+        }
+
+        if (!sPrestigioHollowMgr->HasCompletedRequiredQuest(player))
+        {
+            ClearGossipMenuFor(player);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Debes completar la mision requerida para acceder al prestigio.", GOSSIP_SENDER_MAIN, PH_INFO);
+            AddGossipItemFor(player, GOSSIP_ICON_CHAT, "Cerrar", GOSSIP_SENDER_MAIN, PH_CLOSE);
+            SendGossipMenuFor(player, PH_GOSSIP_TEXT, creature->GetGUID());
+            return true;
+        }
+
         sPrestigioHollowMgr->RepairDefaultLanguages(player);
         ShowPrestigeMenu(player, creature, std::nullopt, true);
         sPrestigioHollowMgr->RequestCount(player, creature, [](Player* current, Creature* source, std::optional<uint32> count)

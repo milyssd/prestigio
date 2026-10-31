@@ -58,12 +58,13 @@ void PrestigioHollowMgr::LoadConfig()
     _announceWorld = sConfigMgr->GetOption<bool>("PrestigioHollow.AnnounceWorld", true);
     _giveStartingOutfit = sConfigMgr->GetOption<bool>("PrestigioHollow.GiveStartingOutfit", true);
     _preservePermanentSpells = sConfigMgr->GetOption<uint32>("PrestigioHollow.PreservePermanentSpells", 2);
+    _requiredQuest = sConfigMgr->GetOption<uint32>("PrestigioHollow.RequiredQuest", 30077);
 
     if (_requiredLevel < 2 || _requiredLevel > 255)
         _requiredLevel = 80;
 
-    LOG_INFO("module", "mod-prestigio-hollow: Enable={}, DB='{}', SysAlasDB='{}', RequiredLevel={}, MaxPrestige={}, PreserveMode={}",
-        _enabled, _databaseName, _sysAlasDatabase, _requiredLevel, _maxPrestige, _preservePermanentSpells);
+    LOG_INFO("module", "mod-prestigio-hollow: Enable={}, DB='{}', SysAlasDB='{}', RequiredLevel={}, RequiredQuest={}, MaxPrestige={}, PreserveMode={}",
+        _enabled, _databaseName, _sysAlasDatabase, _requiredLevel, _requiredQuest, _maxPrestige, _preservePermanentSpells);
 
     if (_started)
         PrestigioDatabase::Instance().SetEnabled(_enabled);
@@ -339,6 +340,15 @@ void PrestigioHollowMgr::GiveStartingOutfit(Player* player) const
     }
 }
 
+bool PrestigioHollowMgr::HasCompletedRequiredQuest(Player* player) const
+{
+    if (!_requiredQuest)
+        return true;
+    if (!player)
+        return false;
+    return player->GetQuestRewardStatus(_requiredQuest);
+}
+
 bool PrestigioHollowMgr::CheckPlayer(Player* player) const
 {
     if (!player || !_enabled)
@@ -346,6 +356,8 @@ bool PrestigioHollowMgr::CheckPlayer(Player* player) const
     if (player->getClass() == CLASS_DEATH_KNIGHT)
         return false;
     if (player->GetLevel() < _requiredLevel)
+        return false;
+    if (!HasCompletedRequiredQuest(player))
         return false;
     if (player->IsInCombat())
         return false;
@@ -419,6 +431,24 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
     uint8 previousLevel = player->GetLevel();
     uint8 playerClass = player->getClass(), race = player->getRace();
     auto name = player->GetName();
+
+    WorldLocation startLoc;
+    uint32 startZone = 0;
+    if (PlayerInfo const* info = sObjectMgr->GetPlayerInfo(race, playerClass))
+    {
+        startLoc = WorldLocation(info->mapId, info->positionX, info->positionY, info->positionZ, info->orientation);
+        startZone = info->areaId;
+    }
+    else
+    {
+        auto it = RaceStart.find(race);
+        if (it != RaceStart.end())
+        {
+            startLoc = WorldLocation(it->second.map, it->second.x, it->second.y, it->second.z, it->second.o);
+            startZone = 0;
+        }
+    }
+
     auto baseline = std::make_shared<PrestigeSaveTransaction>();
     player->SaveToDB(baseline, false, true);
     StoreEquippedItems(player, equipment);
@@ -480,6 +510,9 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         ResetPlayerLevelOne(player);
         GiveStartingOutfit(player);
 
+        player->TeleportTo(startLoc.GetMapId(), startLoc.GetPositionX(), startLoc.GetPositionY(), startLoc.GetPositionZ(), startLoc.GetOrientation());
+        player->SetHomebind(startLoc, startZone);
+
         CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
         for (auto statement : {
             CHAR_DEL_CHAR_ACTION,
@@ -500,16 +533,18 @@ void PrestigioHollowMgr::ApplyPrestige(Player* player)
         }
         player->SaveToDB(trans, false, true);
 
-        auto const& location = RaceStart.at(race);
-        Player::SavePositionInDB(WorldLocation(location.map, location.x, location.y, location.z, location.o), 0, guid, trans);
+        Player::SavePositionInDB(startLoc, uint16(startZone), guid, trans);
         CharacterDatabase.CommitTransaction(trans);
     }
     auto token = ByteArrayToHexStr(Acore::Crypto::GetRandomBytes<16>());
     WorldSession* session = player->GetSession();
     uint32 accountId = session ? session->GetAccountId() : 0;
     uint32 totalTimePlayed = player->GetTotalPlayedTime();
-    if (session)
+    if (!cancelled && session)
+    {
         session->LogoutPlayer(true);
+        Player::SavePositionInDB(startLoc.GetMapId(), startLoc.GetPositionX(), startLoc.GetPositionY(), startLoc.GetPositionZ(), startLoc.GetOrientation(), startZone, guid);
+    }
     PrestigioDatabase::Instance().Save(guid.GetCounter(), accountId, name, previousLevel, playerClass, race,
         totalTimePlayed, token, baseline, changed, cancelled, [this, guid, name, previousLevel](bool success, uint32 count)
     {

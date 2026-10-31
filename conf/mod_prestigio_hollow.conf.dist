@@ -73,6 +73,16 @@ PrestigioHollow.SysAlas.Database = "sysalas"
 PrestigioHollow.RequiredLevel = 80
 
 #
+#    PrestigioHollow.RequiredQuest
+#        Descripcion: ID de la mision que el personaje debe haber completado para poder
+#                     ver las opciones de prestigio y realizar prestigio.
+#                     0 = Ninguna mision requerida.
+#        Por defecto: 30077
+#
+
+PrestigioHollow.RequiredQuest = 30077
+
+#
 #    PrestigioHollow.MaxPrestige
 #        Descripcion: Limite maximo de prestigios que un personaje puede realizar.
 #                     0 = Sin limite (puede prestigiar infinitas veces mientras suba de nivel).

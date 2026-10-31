@@ -26,7 +26,9 @@ public:
     void RepairDefaultLanguages(Player* player) const;
     bool IsEnabled() const { return _enabled; }
     uint32 GetRequiredLevel() const { return _requiredLevel; }
+    uint32 GetRequiredQuest() const { return _requiredQuest; }
     uint32 GetMaxPrestige() const { return _maxPrestige; }
+    bool HasCompletedRequiredQuest(Player* player) const;
     uint32 GetPreserveMode() const { return _preservePermanentSpells; }
 
     void RequestCount(Player* player, Creature* creature,
@@ -79,6 +81,7 @@ private:
     bool _started{false};
     bool _enabled{true};
     uint32 _requiredLevel{80};
+    uint32 _requiredQuest{30077};
     bool _announceWorld{true};
     bool _giveStartingOutfit{true};
     uint32 _preservePermanentSpells{2}; // 0 = no, 1 = siempre activo, 2 = retencion hasta 80
